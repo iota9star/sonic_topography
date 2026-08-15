@@ -24,7 +24,7 @@ an async heightfield bake.
   onto a dB scale (−75 dBFS gate, 45 dB window), a kick-envelope follower,
   and spectral-flux frequency triggers with sensitivity / cooldown / band
   controls and an advanced crosshair mode.
-- **13 built-in themes** with exact linear shader colors, theme rotation,
+- **18 built-in themes** with exact linear shader colors, theme rotation,
   and a ground-EQ mixer that reshapes how each band lifts the terrain.
 - **Adaptive quality** — quality-first: renders at full device resolution and
   probes into supersampling while the display's refresh rate is met, shedding
@@ -55,7 +55,8 @@ fvm flutter test
 - **Audio sources** — DEMO (built-in synthesizer), MUSIC (local files /
   folders) and MIC (live microphone input with dB-scale normalization).
 - **Settings drawer** (right edge or the theme pill in the top bar):
-  - *Themes* — 13 presets, tap to apply, optional auto-rotation.
+  - *Audio source* — the DEMO / MUSIC / MIC picker lives here.
+  - *Themes* — 18 presets, tap to apply, optional auto-rotation.
   - *Scene* — glow, amplitude, pillar width/spacing, rotation speed and
     terrain density (96–224 cells per side).
   - *Floating blocks* — kick-driven crystal cubes with intensity / size /
@@ -81,7 +82,7 @@ lib/
   src/sonic_shader_controller.dart  # uniform packing, tick loop, bake pipeline
   src/scene/scene_state.dart    # ripples, meteors, particles, blocks
   src/audio/                    # FFT, band extraction, beat + freq triggers
-  src/theme/sonic_theme.dart    # 13 built-in palettes
+  src/theme/sonic_theme.dart    # 18 built-in palettes
 shaders/
   sonic_topography.frag         # display pass (DDA ray march + shading)
   sonic_heightfield.frag        # async bake pass

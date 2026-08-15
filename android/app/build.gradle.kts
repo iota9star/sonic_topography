@@ -41,7 +41,10 @@ android {
         create("release") {
             keyAlias = keystoreProperties["keyAlias"] as String? ?: "androiddebugkey"
             keyPassword = keystoreProperties["keyPassword"] as String? ?: "android"
-            storeFile = file(keystoreProperties["storeFile"] as String? ?: "app/debug.keystore")
+            // Resolve against the android/ project root — `file()` alone is
+            // module-relative (android/app/) and would double the app/ path.
+            storeFile = rootProject.file(
+                keystoreProperties["storeFile"] as String? ?: "app/debug.keystore")
             storePassword = keystoreProperties["storePassword"] as String? ?: "android"
         }
     }

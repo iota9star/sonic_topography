@@ -14,14 +14,11 @@ void main() {
       await tester.pump(const Duration(milliseconds: 50));
     }
 
-    expect(find.text('DEMO'), findsOneWidget);
-    expect(find.text('MUSIC'), findsOneWidget);
-    expect(find.text('MIC'), findsOneWidget);
     expect(find.text('SONIC'), findsOneWidget);
-
-    // The segmented control must sit in the top strip of the window.
-    final demoTop = tester.getTopLeft(find.text('DEMO'));
-    expect(demoTop.dy, lessThan(80), reason: 'top bar must be near the top');
+    // Source tabs live in the settings drawer, not the top bar.
+    expect(find.text('DEMO'), findsNothing);
+    expect(find.text('MUSIC'), findsNothing);
+    expect(find.text('MIC'), findsNothing);
 
     // Band meters sit at the bottom, above the settings panel.
     final subTop = tester.getTopLeft(find.text('SUB'));

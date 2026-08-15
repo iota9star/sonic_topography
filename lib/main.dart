@@ -200,7 +200,7 @@ class _SonicHomePageState extends State<SonicHomePage> {
   final PlayerAnalyzer _player = PlayerAnalyzer();
 
   AudioSourceMode _source = AudioSourceMode.demo;
-  SonicTheme _theme = SonicTheme.minimalMonochrome; // reference DEFAULT_THEME_ID
+  SonicTheme _theme = SonicTheme.neonTokyo;
   double _glow = 1.0;
   // Derived from the reference's default density 46 → 155 cells, spacing
   // 168/155 ≈ 1.084, fill ratio 0.857.
@@ -745,6 +745,8 @@ class _SonicHomePageState extends State<SonicHomePage> {
           child: _SettingsPanel(
             theme: t,
             onClose: () => _scaffoldKey.currentState?.closeEndDrawer(),
+            source: _source,
+            onSource: _activate,
             onPickTheme: (th) => setState(() => _theme = th),
             adaptive: _adaptive,
             onAdaptive: (v) => setState(() => _adaptive = v),
@@ -969,8 +971,6 @@ class _OverlayState extends State<_Overlay> {
           children: [
             _TopBar(
               theme: t,
-              source: widget.source,
-              onSource: widget.onSource,
               onOpenSettings: widget.onOpenSettings,
             ),
             if (widget.micMuted) ...[
@@ -1023,21 +1023,15 @@ class _OverlayState extends State<_Overlay> {
 class _TopBar extends StatelessWidget {
   const _TopBar({
     required this.theme,
-    required this.source,
-    required this.onSource,
     required this.onOpenSettings,
   });
 
   final SonicTheme theme;
-  final AudioSourceMode source;
-  final ValueChanged<AudioSourceMode> onSource;
   final VoidCallback onOpenSettings;
 
   @override
   Widget build(BuildContext context) {
-    // Breakpoint layout: phones get two comfortable rows (logo + settings on
-    // top, the audio-source segmented control on its own full-size row below
-    // so touch targets never scale down); tablets/desktop keep one row.
+    // Single row at every size — the audio-source picker lives in the drawer.
     final narrow = MediaQuery.sizeOf(context).width < 700;
     final logo = _Glass(
       color: theme.background,
@@ -1117,55 +1111,14 @@ class _TopBar extends StatelessWidget {
       ),
     );
 
-    final segmented = _Segmented(
-      items: const [
-        (AudioSourceMode.demo, 'DEMO'),
-        (AudioSourceMode.player, 'MUSIC'),
-        (AudioSourceMode.mic, 'MIC'),
-      ],
-      current: source,
-      accent: theme.ripple,
-      onPick: onSource,
-    );
-
-    if (narrow) {
-      return Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          Row(
-            children: [
-              logo,
-              const Spacer(),
-              settingsPill,
-            ],
-          ),
-          const SizedBox(height: 10),
-          // Full-size segmented control — never FittedBox-scaled on phones,
-          // so labels stay readable and the pills stay finger-friendly.
-          segmented,
-        ],
-      );
-    }
-
     return Row(
       children: [
-        logo,
-        const SizedBox(width: 10),
-        Flexible(
-          fit: FlexFit.loose,
-          child: FittedBox(
-            fit: BoxFit.scaleDown,
-            child: segmented,
-          ),
-        ),
+        Flexible(child: FittedBox(fit: BoxFit.scaleDown, child: logo)),
         const Spacer(),
-        Flexible(
-          fit: FlexFit.loose,
-          child: FittedBox(
-            fit: BoxFit.scaleDown,
-            child: settingsPill,
-          ),
-        ),
+        // No Flexible on the trailing pill — a flexible child would split the
+        // free space with the Spacer and strand the pill mid-row instead of
+        // hard right-aligning against the screen edge.
+        FittedBox(fit: BoxFit.scaleDown, child: settingsPill),
       ],
     );
   }
@@ -1768,6 +1721,8 @@ class _SettingsPanel extends StatelessWidget {
   const _SettingsPanel({
     required this.theme,
     required this.onClose,
+    required this.source,
+    required this.onSource,
     required this.onPickTheme,
     required this.adaptive,
     required this.onAdaptive,
@@ -1798,6 +1753,8 @@ class _SettingsPanel extends StatelessWidget {
 
   final SonicTheme theme;
   final VoidCallback onClose;
+  final AudioSourceMode source;
+  final ValueChanged<AudioSourceMode> onSource;
   final ValueChanged<SonicTheme> onPickTheme;
   final bool adaptive;
   final ValueChanged<bool> onAdaptive;
@@ -1908,8 +1865,31 @@ class _SettingsPanel extends StatelessWidget {
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
                   _PanelSection(
+                    title: 'AUDIO SOURCE',
+                    hint: 'DEMO synth · MUSIC files · MIC input',
+                    theme: theme,
+                    children: [
+                      SizedBox(
+                        width: double.infinity,
+                        child: Center(
+                          child: _Segmented(
+                            items: const [
+                              (AudioSourceMode.demo, 'DEMO'),
+                              (AudioSourceMode.player, 'MUSIC'),
+                              (AudioSourceMode.mic, 'MIC'),
+                            ],
+                            current: source,
+                            accent: theme.ripple,
+                            onPick: onSource,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 14),
+                  _PanelSection(
                     title: 'THEMES',
-                    hint: '${SonicTheme.builtIn.length} reference presets — '
+                    hint: '${SonicTheme.builtIn.length} presets — '
                         'tap to apply',
                     theme: theme,
                     children: [
@@ -2721,7 +2701,7 @@ class _Glass extends StatelessWidget {
 
 // ══════════════════════════════ Sheets ══════════════════════════════
 
-/// Theme picker grid (drawer THEMES section) — the 13 reference presets
+/// Theme picker grid (drawer THEMES section) — the built-in presets
 /// with color dots, current one highlighted.
 class _ThemeGrid extends StatelessWidget {
   const _ThemeGrid({required this.current, required this.onPick});

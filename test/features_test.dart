@@ -47,10 +47,10 @@ void main() {
     expect(onsets, 0);
   });
 
-  test('All 13 reference themes exist with fog colors', () {
-    expect(SonicTheme.builtIn.length, 13);
+  test('All built-in themes exist with fog colors', () {
+    expect(SonicTheme.builtIn.length, 18);
     final ids = SonicTheme.builtIn.map((t) => t.id).toSet();
-    expect(ids.length, 13);
+    expect(ids.length, 18);
     for (final t in SonicTheme.builtIn) {
       expect(t.linear.length, 8, reason: '${t.id} needs 8 linear colors');
       expect(t.vFog.x.isFinite, isTrue);

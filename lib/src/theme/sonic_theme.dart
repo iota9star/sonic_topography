@@ -213,9 +213,9 @@ class SonicTheme {
 
   /// All built-in themes, reference order.
   static final List<SonicTheme> builtIn = [
+    neonTokyo,
     inkWash,
     nocturnal,
-    neonTokyo,
     cyberForest,
     minimalMonochrome,
     glacierDay,
@@ -226,6 +226,11 @@ class SonicTheme {
     porcelainTeal,
     wineSignal,
     daybreakLime,
+    solarFlare,
+    ultraviolet,
+    deepSea,
+    auroraVeil,
+    crimsonPulse,
   ];
 
   /// Ported from the reference `ink-wash` theme (raw linear values).
@@ -445,5 +450,135 @@ class SonicTheme {
     warm: const Color(0xFFC65B47),
     accent: const Color(0xFF5C6F42),
     glowIntensity: 0.8,
+  );
+
+  /// Molten gold-and-copper terrain on a near-black maroon sky.
+  static final SonicTheme solarFlare = SonicTheme.fromLinear(
+    id: 'solar-flare',
+    name: 'Solar Flare',
+    background: const Color(0xFF0A0301),
+    background2: const Color(0xFF170803),
+    fog: const Color(0xFF0A0301),
+    coolCore: const Color(0xFFFF9933),
+    coolEdge: const Color(0xFFCC4D08),
+    warmCore: const Color(0xFFFFE566),
+    warmEdge: const Color(0xFFFF7A26),
+    ripple: const Color(0xFFFFD9A6),
+    glowIntensity: 1.25,
+    rotationSpeed: 0.5,
+    linear: [
+      Vector3(0.04, 0.01, 0.0), // base1
+      Vector3(0.09, 0.03, 0.01), // base2
+      Vector3(1.0, 0.6, 0.1), // coolCore
+      Vector3(0.8, 0.3, 0.05), // coolEdge
+      Vector3(1.0, 0.9, 0.35), // warmCore
+      Vector3(1.0, 0.48, 0.12), // warmEdge
+      Vector3(1.0, 0.85, 0.6), // ripple
+      Vector3(0.04, 0.01, 0.0), // fog (= base1)
+    ],
+  );
+
+  /// Violet/magenta plasma — deep-purple sky, electric lilac pillars.
+  static final SonicTheme ultraviolet = SonicTheme.fromLinear(
+    id: 'ultraviolet',
+    name: 'Ultraviolet',
+    background: const Color(0xFF08010F),
+    background2: const Color(0xFF12041C),
+    fog: const Color(0xFF08010F),
+    coolCore: const Color(0xFFCC33FF),
+    coolEdge: const Color(0xFF8C26E6),
+    warmCore: const Color(0xFFFF4DE6),
+    warmEdge: const Color(0xFFE62680),
+    ripple: const Color(0xFFE699FF),
+    glowIntensity: 1.4,
+    rotationSpeed: 0.5,
+    linear: [
+      Vector3(0.02, 0.0, 0.04), // base1
+      Vector3(0.05, 0.01, 0.09), // base2
+      Vector3(0.8, 0.2, 1.0), // coolCore
+      Vector3(0.45, 0.1, 0.9), // coolEdge
+      Vector3(1.0, 0.3, 0.9), // warmCore
+      Vector3(0.9, 0.15, 0.5), // warmEdge
+      Vector3(0.9, 0.6, 1.0), // ripple
+      Vector3(0.02, 0.0, 0.04), // fog (= base1)
+    ],
+  );
+
+  /// Abyssal teal — black ocean floor, cyan bioluminescence.
+  static final SonicTheme deepSea = SonicTheme.fromLinear(
+    id: 'deep-sea',
+    name: 'Deep Sea',
+    background: const Color(0xFF00070C),
+    background2: const Color(0xFF001019),
+    fog: const Color(0xFF00070C),
+    coolCore: const Color(0xFF1AE6E6),
+    coolEdge: const Color(0xFF0D7399),
+    warmCore: const Color(0xFF4DFFCC),
+    warmEdge: const Color(0xFF1A9980),
+    ripple: const Color(0xFF66FFFF),
+    glowIntensity: 1.2,
+    rotationSpeed: 0.5,
+    linear: [
+      Vector3(0.0, 0.02, 0.03), // base1
+      Vector3(0.0, 0.05, 0.07), // base2
+      Vector3(0.1, 0.9, 0.9), // coolCore
+      Vector3(0.05, 0.45, 0.6), // coolEdge
+      Vector3(0.3, 1.0, 0.8), // warmCore
+      Vector3(0.1, 0.6, 0.5), // warmEdge
+      Vector3(0.4, 1.0, 1.0), // ripple
+      Vector3(0.0, 0.02, 0.03), // fog (= base1)
+    ],
+  );
+
+  /// Aurora over tundra — green↔violet curtains, pale mint ripples.
+  static final SonicTheme auroraVeil = SonicTheme.fromLinear(
+    id: 'aurora-veil',
+    name: 'Aurora Veil',
+    background: const Color(0xFF020708),
+    background2: const Color(0xFF04100D),
+    fog: const Color(0xFF020708),
+    coolCore: const Color(0xFF33FF99),
+    coolEdge: const Color(0xFF1A99E6),
+    warmCore: const Color(0xFFB366FF),
+    warmEdge: const Color(0xFF6633CC),
+    ripple: const Color(0xFF99FFE6),
+    glowIntensity: 1.3,
+    rotationSpeed: 0.5,
+    linear: [
+      Vector3(0.005, 0.015, 0.02), // base1
+      Vector3(0.01, 0.04, 0.05), // base2
+      Vector3(0.2, 1.0, 0.6), // coolCore
+      Vector3(0.1, 0.6, 0.9), // coolEdge
+      Vector3(0.7, 0.4, 1.0), // warmCore
+      Vector3(0.4, 0.2, 0.8), // warmEdge
+      Vector3(0.6, 1.0, 0.9), // ripple
+      Vector3(0.005, 0.015, 0.02), // fog (= base1)
+    ],
+  );
+
+  /// Crimson circuitry — black-red sky, scarlet pillars, ember glow.
+  static final SonicTheme crimsonPulse = SonicTheme.fromLinear(
+    id: 'crimson-pulse',
+    name: 'Crimson Pulse',
+    background: const Color(0xFF0A0102),
+    background2: const Color(0xFF170307),
+    fog: const Color(0xFF0A0102),
+    coolCore: const Color(0xFFFF2640),
+    coolEdge: const Color(0xFF990D26),
+    warmCore: const Color(0xFFFF7326),
+    warmEdge: const Color(0xFFCC330D),
+    ripple: const Color(0xFFFFBFB3),
+    glowIntensity: 1.35,
+    rotationSpeed: 0.5,
+    linear: [
+      Vector3(0.04, 0.005, 0.01), // base1
+      Vector3(0.09, 0.01, 0.03), // base2
+      Vector3(1.0, 0.15, 0.25), // coolCore
+      Vector3(0.6, 0.05, 0.15), // coolEdge
+      Vector3(1.0, 0.45, 0.15), // warmCore
+      Vector3(0.8, 0.2, 0.05), // warmEdge
+      Vector3(1.0, 0.75, 0.7), // ripple
+      Vector3(0.04, 0.005, 0.01), // fog (= base1)
+    ],
   );
 }
