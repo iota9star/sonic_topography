@@ -1111,13 +1111,14 @@ class _TopBar extends StatelessWidget {
       ),
     );
 
+    // spaceBetween (not Spacer): a Flexible logo slot shares free space with
+    // a Spacer by flex factor, and its unused share strands the trailing pill
+    // mid-row on wide windows. spaceBetween always pins first-child-start /
+    // last-child-end; the Flexible still lets the logo shrink on tiny widths.
     return Row(
+      mainAxisAlignment: MainAxisAlignment.spaceBetween,
       children: [
         Flexible(child: FittedBox(fit: BoxFit.scaleDown, child: logo)),
-        const Spacer(),
-        // No Flexible on the trailing pill — a flexible child would split the
-        // free space with the Spacer and strand the pill mid-row instead of
-        // hard right-aligning against the screen edge.
         FittedBox(fit: BoxFit.scaleDown, child: settingsPill),
       ],
     );
