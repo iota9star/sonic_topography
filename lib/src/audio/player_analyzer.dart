@@ -100,7 +100,12 @@ class PlayerAnalyzer extends AudioAnalyzer {
         final t = x - i0;
         _spectrum[i] = samples[i0] * (1 - t) + samples[i1] * t;
       }
-      final db = dbSpectrum(_spectrum);
+      // soloud's linear FFT magnitudes run ~20 dB hotter than the windowed-
+      // FFT scale this dB mapping was calibrated for — without the 0.1 gain
+      // every audible bin clamps to 1.0 and the low/mid bands sit pinned
+      // (verified with a live probe: sub/bass/mid flatlined at 1.000 while a
+      // 2 Hz kick pattern played; kick envelope never refired).
+      final db = dbSpectrum(_spectrum, gain: 0.1);
       final dtSec = _pullInterval.inMilliseconds / 1000;
       _current = _extractor.process(db, dtSec: dtSec);
       final out = _detector.step(db, dtSec);
