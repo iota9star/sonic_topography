@@ -79,7 +79,7 @@ class PanelTuning {
     this.blockMax = 26,
     this.blockSpeed = 77,
     this.blockCount = 32,
-    this.density = 46,
+    this.density = 70,
     this.pulse = const TriggerTuning(
       sensitivity: 0.85,
       cooldownFrames: 15,
@@ -201,12 +201,12 @@ class _SonicHomePageState extends State<SonicHomePage> {
 
   AudioSourceMode _source = AudioSourceMode.demo;
   SonicTheme _theme = SonicTheme.neonTokyo;
-  double _glow = 1.0;
-  // Derived from the reference's default density 46 → 155 cells, spacing
-  // 168/155 ≈ 1.084, fill ratio 0.857.
-  double _pillarWidth = 0.9290;
-  double _spacing = 1.0839;
-  double _amplitude = 1.0;
+  double _glow = 1.15;
+  // Derived from the default density 70 → 186 cells, spacing 168/186 ≈
+  // 0.903, fill ratio 0.857.
+  double _pillarWidth = 0.7739;
+  double _spacing = 0.9032;
+  double _amplitude = 1.1;
   bool _meteors = true;
   bool _ripples = true;
   bool _blocks = !kSonicNoBlocks;
