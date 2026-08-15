@@ -4,7 +4,7 @@ import 'dart:ui' as ui;
 
 import 'dart:io' as io show Platform;
 
-import 'package:flutter/foundation.dart' show kIsWeb;
+import 'package:flutter/foundation.dart' show kDebugMode, kIsWeb;
 import 'package:flutter/material.dart';
 
 import 'audio/audio_bands.dart';
@@ -55,18 +55,23 @@ class SonicShaderController extends ChangeNotifier {
 /// display's real refresh interval (set from `display.refreshRate`). Cost is
 /// wall-clock frame time, which vsync quantizes to multiples of that interval:
 /// either we hit every vsync (≈1.0) or we drop to 2×/3× it. Sub-vsync GPU
-/// headroom is therefore invisible — the only way to discover it is to probe:
-/// while the budget is met, renderScale climbs (up to supersampling, which
-/// meaningfully sharpens the ray-marched grid); the moment frames are missed
-/// it sheds quality fast. The equilibrium is the highest renderScale that
-/// still delivers every vsync on this GPU.
+/// headroom is therefore invisible — the only way to discover it is to probe.
+///
+/// Stability matters more than squeezing the last notch: every renderScale
+/// change visibly re-rasters the grid, so a naive probe/retreat loop makes
+/// the whole scene pulse. This controller uses AIMD with a learned ceiling:
+/// a level that missed vsync once is remembered and not re-tried for ~20s of
+/// stable operation, drops are gentle single steps, and climbs require 1.2s
+/// of consecutive on-budget frames. The result settles just under the cliff
+/// and stays there.
 class AdaptiveQuality {
   AdaptiveQuality({
     double initialRenderScale = 1.0,
     this.targetFrameTimeMs = 1000 / 120,
     this.minRenderScale = 0.4,
     this.maxRenderScale = 1.5,
-  }) : renderScale = initialRenderScale;
+  })  : renderScale = initialRenderScale.clamp(minRenderScale, maxRenderScale),
+        _ceiling = maxRenderScale;
 
   double targetFrameTimeMs;
   final double minRenderScale, maxRenderScale;
@@ -75,6 +80,8 @@ class AdaptiveQuality {
 
   double _ema = 1000 / 120;
   double _cooldown = 0;
+  double _stableSec = 0; // consecutive on-budget time at the current scale
+  double _ceiling; // highest level not (recently) known to miss vsync
   int _sample = 0;
 
   double get fps => _ema <= 0 ? 0 : 1000 / _ema;
@@ -82,32 +89,48 @@ class AdaptiveQuality {
   void sample(double costMs) {
     _sample++;
     _ema += (costMs - _ema) * 0.08;
+    final dtSec = (costMs / 1000.0).clamp(0.001, 0.05);
     if (_cooldown > 0) {
-      _cooldown -= costMs / 1000.0;
+      _cooldown -= dtSec;
       return;
     }
     if (_sample < 20) return;
     final ratio = _ema / targetFrameTimeMs;
     if (ratio > 1.15) {
-      // Missing vsync: shed resolution first (fast, several notches when far
-      // over), ray-march density only once resolution is at the floor.
-      final overBy = (ratio - 1.0).clamp(0.0, 1.0);
-      final rs = (renderScale - 0.08 - overBy * 0.12)
-          .clamp(minRenderScale, maxRenderScale);
+      // Missing vsync: this level fails — record it as the new ceiling, shed
+      // one gentle notch (further misses walk down the staircase), and only
+      // touch ray-march density once resolution is at the floor.
+      final failed = renderScale;
+      final rs = (renderScale - 0.06).clamp(minRenderScale, maxRenderScale);
       final stepped = (rs * 100).round() / 100.0;
       if (stepped < renderScale) {
         renderScale = stepped;
+        _ceiling = math.min(_ceiling, failed - 0.02);
       } else {
         marchScale = (marchScale - 0.1).clamp(0.5, 1.0);
       }
-      _cooldown = 0.35;
-    } else if (ratio <= 1.05 && renderScale < maxRenderScale) {
-      // Budget met: probe one notch upward. If the GPU was actually saturated
-      // the next reading overshoots 1.15 and we back off within ~0.35s.
-      final rs = (renderScale + 0.04).clamp(minRenderScale, maxRenderScale);
+      _stableSec = 0;
+      _cooldown = 0.5;
+      return;
+    }
+    // Budget met.
+    _stableSec += dtSec;
+    final cap = math.min(_ceiling, maxRenderScale);
+    if (renderScale < cap && _stableSec >= 1.2) {
+      // Climb one notch only after sustained stability, never above the
+      // learned ceiling.
+      final rs = (renderScale + 0.04).clamp(minRenderScale, cap);
       renderScale = (rs * 100).round() / 100.0;
-      if (renderScale >= maxRenderScale - 0.001) marchScale = 1.0;
-      _cooldown = 0.9;
+      _stableSec = 0;
+      _cooldown = 0.6;
+    } else if (renderScale >= maxRenderScale - 0.001) {
+      marchScale = 1.0;
+    }
+    if (_stableSec >= 20) {
+      // Long stable run: relax the ceiling one notch so load changes
+      // (window moved, shaders warmed up) get re-explored eventually.
+      _ceiling = (_ceiling + 0.04).clamp(minRenderScale, maxRenderScale);
+      _stableSec = 0;
     }
   }
 }
@@ -266,6 +289,9 @@ class _SonicTopographyState extends State<SonicTopography>
     _quality = AdaptiveQuality(
       initialRenderScale: widget.renderScale,
       targetFrameTimeMs: 1000 / widget.targetFps,
+      // Debug-mode overhead makes the SSAA probe chase a moving cliff and
+      // oscillate; full device resolution is the sane dev ceiling.
+      maxRenderScale: kDebugMode ? 1.0 : 1.5,
     );
     _anim = AnimationController(vsync: this, duration: const Duration(seconds: 1))
       ..repeat();
