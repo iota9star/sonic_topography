@@ -1,11 +1,18 @@
-# Sonic Topography 声波地形
+<p align="center">
+  <img src="assets/icon/app_icon.png" width="128" alt="Sonic Topography logo" />
+</p>
+
+<h1 align="center">Sonic Topography 声波地形</h1>
+
+<p align="center">
+  <img src="https://img.shields.io/badge/platforms-macOS%20%7C%20Windows%20%7C%20Linux%20%7C%20Android%20%7C%20iOS-blue" alt="platforms" />
+  <img src="https://img.shields.io/badge/license-MIT-green" alt="license" />
+</p>
 
 基于 Flutter + Impeller 片元着色器的 GPU 音频可视化：把音乐变成一颗旋转的
 "声波星球"——方块柱地形随节拍抬升、发光、泛起涟漪，还有流星、粒子与悬浮
 水晶方块。整个场景在单个显示 pass 中渲染，高度场异步烘焙，CPU 每帧只推
 约 30 个 uniform。
-
-![platforms](https://img.shields.io/badge/platforms-macOS%20%7C%20Windows%20%7C%20Linux%20%7C%20Android%20%7C%20iOS-blue)
 
 ## 特性
 
@@ -17,8 +24,8 @@
   （灵敏度 / 冷却 / 频段 / 强度可调，高级模式可在实时频谱上拖十字准星）。
 - **13 套内置主题** —— 精确的 linear 着色器配色，支持主题自动轮换；地面
   EQ 混音台可重塑各频段对地形的驱动。
-- **自适应画质** —— 渲染分辨率与步进预算跟随实测 GPU 光栅耗时动态调整，
-  默认全分辨率起步。
+- **自适应画质** —— 画质优先：默认按设备全分辨率渲染，在满足屏幕刷新率
+  的前提下逐步上探超采样，只有真正掉帧时才降分辨率。
 - **响应式界面** —— 从手机到桌面布局自适应，右侧官方抽屉承载全部设置，
   并有多尺寸自动化布局测试保障。
 
@@ -74,3 +81,7 @@ shaders/
   sonic_heightfield.frag        # 异步烘焙 pass
 test/                           # 布局、色彩、触发器与着色器测试
 ```
+
+## 开源协议
+
+本项目基于 [MIT License](LICENSE) 开源。

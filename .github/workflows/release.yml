@@ -54,7 +54,8 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y clang cmake git ninja-build pkg-config \
-            libgtk-3-dev liblzma-dev libstdc++-12-dev
+            libgtk-3-dev liblzma-dev libstdc++-12-dev \
+            libasound2-dev libpulse-dev
 
       - name: Pub get
         run: flutter pub get
@@ -92,6 +93,10 @@ jobs:
       - name: Build (Windows)
         if: matrix.target == 'windows'
         shell: pwsh
+        env:
+          # permission_handler_windows still includes <experimental/coroutine>;
+          # silence the MSVC deprecation static-assert until it's updated.
+          CL: /D_SILENCE_EXPERIMENTAL_COROUTINE_DEPRECATION_WARNINGS
         run: |
           flutter build windows --release
           New-Item -ItemType Directory -Force -Path out | Out-Null

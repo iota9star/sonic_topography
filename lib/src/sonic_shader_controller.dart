@@ -2,6 +2,9 @@ import 'dart:math' as math;
 import 'dart:typed_data' as td;
 import 'dart:ui' as ui;
 
+import 'dart:io' as io show Platform;
+
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 
 import 'audio/audio_bands.dart';
@@ -46,13 +49,23 @@ class SonicShaderController extends ChangeNotifier {
   ui.FragmentShader createBake() => _bakeProgram!.fragmentShader();
 }
 
-/// Adaptive quality — tunes renderScale + marchScale off the GPU raster time.
+/// Adaptive quality — maximum fidelity at the display's full refresh rate.
+///
+/// Policy: fps always wins, quality absorbs the slack. The budget is the
+/// display's real refresh interval (set from `display.refreshRate`). Cost is
+/// wall-clock frame time, which vsync quantizes to multiples of that interval:
+/// either we hit every vsync (≈1.0) or we drop to 2×/3× it. Sub-vsync GPU
+/// headroom is therefore invisible — the only way to discover it is to probe:
+/// while the budget is met, renderScale climbs (up to supersampling, which
+/// meaningfully sharpens the ray-marched grid); the moment frames are missed
+/// it sheds quality fast. The equilibrium is the highest renderScale that
+/// still delivers every vsync on this GPU.
 class AdaptiveQuality {
   AdaptiveQuality({
-    double initialRenderScale = 0.75,
+    double initialRenderScale = 1.0,
     this.targetFrameTimeMs = 1000 / 120,
     this.minRenderScale = 0.4,
-    this.maxRenderScale = 1.0,
+    this.maxRenderScale = 1.5,
   }) : renderScale = initialRenderScale;
 
   double targetFrameTimeMs;
@@ -73,33 +86,34 @@ class AdaptiveQuality {
       _cooldown -= costMs / 1000.0;
       return;
     }
-    if (_sample < 30) return;
+    if (_sample < 20) return;
     final ratio = _ema / targetFrameTimeMs;
-    if (ratio > 1.20) {
+    if (ratio > 1.15) {
+      // Missing vsync: shed resolution first (fast, several notches when far
+      // over), ray-march density only once resolution is at the floor.
       final overBy = (ratio - 1.0).clamp(0.0, 1.0);
-      final rs = (renderScale - 0.06 - overBy * 0.08).clamp(minRenderScale, 1.0);
+      final rs = (renderScale - 0.08 - overBy * 0.12)
+          .clamp(minRenderScale, maxRenderScale);
       final stepped = (rs * 100).round() / 100.0;
       if (stepped < renderScale) {
         renderScale = stepped;
       } else {
         marchScale = (marchScale - 0.1).clamp(0.5, 1.0);
       }
-      _cooldown = 0.5;
-    } else if (ratio < 0.82 && renderScale < maxRenderScale) {
-      final headroom = (1.0 - ratio).clamp(0.0, 1.0);
-      final rs = (renderScale + 0.04 + headroom * 0.04).clamp(minRenderScale, 1.0);
-      final stepped = (rs * 100).round() / 100.0;
-      if (stepped > renderScale) {
-        renderScale = stepped;
-        if (renderScale >= 0.98) marchScale = 1.0;
-      }
-      _cooldown = 0.5;
+      _cooldown = 0.35;
+    } else if (ratio <= 1.05 && renderScale < maxRenderScale) {
+      // Budget met: probe one notch upward. If the GPU was actually saturated
+      // the next reading overshoots 1.15 and we back off within ~0.35s.
+      final rs = (renderScale + 0.04).clamp(minRenderScale, maxRenderScale);
+      renderScale = (rs * 100).round() / 100.0;
+      if (renderScale >= maxRenderScale - 0.001) marchScale = 1.0;
+      _cooldown = 0.9;
     }
   }
 }
 
 class QualityMetrics {
-  const QualityMetrics({this.fps = 0, this.renderScale = 0.75, this.marchScale = 1.0});
+  const QualityMetrics({this.fps = 0, this.renderScale = 1.0, this.marchScale = 1.0});
   final double fps, renderScale, marchScale;
 }
 
@@ -119,7 +133,7 @@ class SonicTopography extends StatefulWidget {
     this.audioAnalyzer,
     this.rotationSpeed,
     this.autoRotate = true,
-    this.renderScale = 0.75,
+    this.renderScale = 1.0,
     this.spacing = 1.05,
     this.pillarWidth = 0.64,
     this.camRadius = 99.6,
@@ -256,6 +270,22 @@ class _SonicTopographyState extends State<SonicTopography>
     _anim = AnimationController(vsync: this, duration: const Duration(seconds: 1))
       ..repeat();
     _anim.addListener(_tickBody);
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    // The quality budget must match the display's real refresh interval.
+    // Without the perf sampler the controller scores the plain frame
+    // interval, which on a 60 Hz display (16.7 ms) would forever exceed a
+    // fixed 120 fps budget (8.3 ms) and drive renderScale to the floor —
+    // the classic "everything looks upscaled and blurry" bug.
+    final views = WidgetsBinding.instance.platformDispatcher.views;
+    if (views.isEmpty) return;
+    final refresh = views.first.display.refreshRate;
+    if (refresh > 0) {
+      _quality.targetFrameTimeMs = 1000.0 / refresh.clamp(30.0, 240.0);
+    }
   }
 
   @override
@@ -655,6 +685,11 @@ class _SonicPainter extends CustomPainter {
       ui.Paint()..color = state.widget.background ?? state.widget.theme.background,
     );
 
+    // Widget tests assert chrome layout, not shader pixels: software-
+    // rasterizing the ray-marcher at full resolution would dominate the test
+    // time (minutes per case). Paint the themed background only.
+    if (!kIsWeb && io.Platform.environment['FLUTTER_TEST'] == 'true') return;
+
     // 1) Kick the async heightfield bake (non-blocking). GPU rasterizes it in
     //    parallel with the display pass — no CPU-GPU stall.
     state._kickBake();
@@ -671,15 +706,18 @@ class _SonicPainter extends CustomPainter {
       state._staticsApplied = true;
     }
 
-    // Target: render at most ~1.5M shader pixels (crisp on retina, fast
-    // everywhere). Compute the scale that achieves this.
+    // Rasterize at full device resolution by default (crisp on retina — a
+    // 1.5MP cap would render at ~half res on modern displays and look soft),
+    // with only a sanity ceiling for extreme 5K/6K surfaces. Adaptive quality
+    // may push beyond 1.0 (supersampling) when the GPU has headroom.
     final dpr = _devicePixelRatio();
     final devW = size.width * dpr;
     final devH = size.height * dpr;
     final devPixels = devW * devH;
-    const maxPixels = 1500000.0; // ~1.5MP
+    const maxPixels = 8400000.0; // ~8.4MP (4K-class) absolute ceiling
     var scale = devPixels > maxPixels ? math.sqrt(maxPixels / devPixels) : 1.0;
-    // Adaptive quality can further reduce on weak hardware.
+    // Adaptive quality can reduce this on weak hardware, or raise it into
+    // supersampling territory on strong hardware.
     if (state.widget.adaptiveQuality) {
       scale *= state._quality.renderScale;
     }
@@ -729,7 +767,9 @@ class _SonicPainter extends CustomPainter {
       img,
       ui.Rect.fromLTWH(0, 0, img.width.toDouble(), img.height.toDouble()),
       Offset.zero & size,
-      ui.Paint()..filterQuality = ui.FilterQuality.low,
+      // medium (mipmapped) keeps supersampled downsamples clean; bilinear
+      // would alias when rendering above device resolution.
+      ui.Paint()..filterQuality = ui.FilterQuality.medium,
     );
   }
 

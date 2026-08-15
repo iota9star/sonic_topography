@@ -28,6 +28,19 @@ void main() {
       expect(tester.takeException(), isNull,
           reason: 'closed-state overflow at ${e.key}');
 
+      // Breakpoint layout: phones stack the audio-source picker on its own
+      // row below the logo; desktop keeps everything on one row.
+      final logoBottom = tester.getBottomLeft(find.text('SONIC')).dy;
+      final demoTop = tester.getTopLeft(find.text('DEMO')).dy;
+      final isNarrow = e.value.width < 700;
+      if (isNarrow) {
+        expect(demoTop, greaterThan(logoBottom),
+            reason: 'phone: DEMO picker must sit on the row below the logo');
+      } else {
+        expect(demoTop, lessThan(logoBottom + 1),
+            reason: 'desktop: top bar must stay a single row');
+      }
+
       // Open the right-hand drawer and exercise the scrollable panel.
       await tester.tap(find.byIcon(Icons.tune_rounded).first);
       for (int i = 0; i < 8; i++) {

@@ -1,6 +1,5 @@
 // Diagnostic: does the app chrome (top bar / band meters / settings) build
 // and paint above the scene, at sane positions, without layout overflow?
-import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:sonic_topography/main.dart';
 import 'package:sonic_topography/src/audio/audio_bands.dart';

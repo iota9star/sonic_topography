@@ -558,11 +558,10 @@ class _SonicHomePageState extends State<SonicHomePage> {
     sonicDiag('picker: pickFiles() calling');
     List<PlatformFile> files;
     try {
-      // file_picker 11 static facade returns FilePickerResult? (null = the
-      // user closed the dialog). 12.x is avoided on purpose: its macOS Dart
-      // layer and native method names disagree upstream.
-      final result = await FilePicker.pickFiles(type: FileType.audio);
-      files = result?.files ?? const <PlatformFile>[];
+      // file_picker 12 static facade returns the picked list directly
+      // (null = the user closed the dialog); 11.x is incompatible with
+      // Flutter 3.47's built-in Kotlin on Android.
+      files = await FilePicker.pickFiles(type: FileType.audio);
     } catch (e) {
       sonicDiag('picker: pickFiles THREW: $e');
       _toast('File picker failed: $e');
@@ -1036,74 +1035,127 @@ class _TopBar extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Row(
-      children: [
-        // Shrinkable logo pill — must yield to the segmented control and
-        // theme pill on narrow phone screens (FittedBox scales the glass
-        // whole, padding included).
-        Flexible(
-          fit: FlexFit.loose,
-          child: FittedBox(
-            fit: BoxFit.scaleDown,
-            child: _Glass(
-              color: theme.background,
-              child: Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Container(
-                    width: 8,
-                    height: 8,
-                    decoration: BoxDecoration(
-                      color: theme.ripple,
-                      shape: BoxShape.circle,
-                      boxShadow: [
-                        BoxShadow(
-                          color: theme.ripple.withValues(alpha: 0.9),
-                          blurRadius: 10,
-                        ),
-                      ],
-                    ),
-                  ),
-                  const SizedBox(width: 10),
-                  Text(
-                    'SONIC',
-                    style: TextStyle(
-                      color: theme.ripple,
-                      fontWeight: FontWeight.w800,
-                      letterSpacing: 5,
-                      fontSize: 14,
-                    ),
-                  ),
-                  const SizedBox(width: 6),
-                  Text(
-                    'TOPOGRAPHY',
-                    style: TextStyle(
-                      color: Colors.white.withValues(alpha: 0.55),
-                      fontWeight: FontWeight.w200,
-                      letterSpacing: 5,
-                      fontSize: 14,
-                    ),
-                  ),
-                ],
-              ),
+    // Breakpoint layout: phones get two comfortable rows (logo + settings on
+    // top, the audio-source segmented control on its own full-size row below
+    // so touch targets never scale down); tablets/desktop keep one row.
+    final narrow = MediaQuery.sizeOf(context).width < 700;
+    final logo = _Glass(
+      color: theme.background,
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Container(
+            width: 8,
+            height: 8,
+            decoration: BoxDecoration(
+              color: theme.ripple,
+              shape: BoxShape.circle,
+              boxShadow: [
+                BoxShadow(
+                  color: theme.ripple.withValues(alpha: 0.9),
+                  blurRadius: 10,
+                ),
+              ],
             ),
           ),
-        ),
+          const SizedBox(width: 10),
+          Text(
+            'SONIC',
+            style: TextStyle(
+              color: theme.ripple,
+              fontWeight: FontWeight.w800,
+              letterSpacing: 5,
+              fontSize: 14,
+            ),
+          ),
+          if (!narrow) ...[
+            const SizedBox(width: 6),
+            Text(
+              'TOPOGRAPHY',
+              style: TextStyle(
+                color: Colors.white.withValues(alpha: 0.55),
+                fontWeight: FontWeight.w200,
+                letterSpacing: 5,
+                fontSize: 14,
+              ),
+            ),
+          ],
+        ],
+      ),
+    );
+
+    final settingsPill = _Glass(
+      color: theme.background,
+      onTap: onOpenSettings,
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          _swatch(theme.coolCore),
+          const SizedBox(width: 3),
+          _swatch(theme.warmCore),
+          const SizedBox(width: 3),
+          _swatch(theme.ripple),
+          // Theme name only when there is room for it.
+          if (!narrow) ...[
+            const SizedBox(width: 8),
+            Text(
+              theme.name,
+              style: const TextStyle(
+                color: Colors.white,
+                fontSize: 12,
+                fontWeight: FontWeight.w500,
+              ),
+            ),
+          ],
+          const SizedBox(width: 6),
+          Icon(
+            Icons.tune_rounded,
+            size: 15,
+            color: Colors.white.withValues(alpha: 0.45),
+          ),
+        ],
+      ),
+    );
+
+    final segmented = _Segmented(
+      items: const [
+        (AudioSourceMode.demo, 'DEMO'),
+        (AudioSourceMode.player, 'MUSIC'),
+        (AudioSourceMode.mic, 'MIC'),
+      ],
+      current: source,
+      accent: theme.ripple,
+      onPick: onSource,
+    );
+
+    if (narrow) {
+      return Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Row(
+            children: [
+              logo,
+              const Spacer(),
+              settingsPill,
+            ],
+          ),
+          const SizedBox(height: 10),
+          // Full-size segmented control — never FittedBox-scaled on phones,
+          // so labels stay readable and the pills stay finger-friendly.
+          segmented,
+        ],
+      );
+    }
+
+    return Row(
+      children: [
+        logo,
         const SizedBox(width: 10),
         Flexible(
           fit: FlexFit.loose,
           child: FittedBox(
             fit: BoxFit.scaleDown,
-            child: _Segmented(
-              items: const [
-                (AudioSourceMode.demo, 'DEMO'),
-                (AudioSourceMode.player, 'MUSIC'),
-                (AudioSourceMode.mic, 'MIC'),
-              ],
-              current: source,
-              accent: theme.ripple,
-              onPick: onSource,
-            ),
+            child: segmented,
           ),
         ),
         const Spacer(),
@@ -1111,35 +1163,7 @@ class _TopBar extends StatelessWidget {
           fit: FlexFit.loose,
           child: FittedBox(
             fit: BoxFit.scaleDown,
-            child: _Glass(
-              color: theme.background,
-              onTap: onOpenSettings,
-              child: Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  _swatch(theme.coolCore),
-                  const SizedBox(width: 3),
-                  _swatch(theme.warmCore),
-                  const SizedBox(width: 3),
-                  _swatch(theme.ripple),
-                  const SizedBox(width: 8),
-                  Text(
-                    theme.name,
-                    style: const TextStyle(
-                      color: Colors.white,
-                      fontSize: 12,
-                      fontWeight: FontWeight.w500,
-                    ),
-                  ),
-                  const SizedBox(width: 5),
-                  Icon(
-                    Icons.tune_rounded,
-                    size: 13,
-                    color: Colors.white.withValues(alpha: 0.45),
-                  ),
-                ],
-              ),
-            ),
+            child: settingsPill,
           ),
         ),
       ],
@@ -1219,9 +1243,11 @@ class _Segmented extends StatelessWidget {
               onTap: () => onPick(mode),
               child: AnimatedContainer(
                 duration: const Duration(milliseconds: 180),
-                padding: const EdgeInsets.symmetric(
-                  horizontal: 14,
-                  vertical: 7,
+                // Roomier pills on phone layouts — finger-friendly targets
+                // (~40px tall) instead of the compact desktop size.
+                padding: EdgeInsets.symmetric(
+                  horizontal: MediaQuery.sizeOf(context).width < 700 ? 18 : 14,
+                  vertical: MediaQuery.sizeOf(context).width < 700 ? 11 : 7,
                 ),
                 decoration: BoxDecoration(
                   color: current == mode
@@ -1235,7 +1261,7 @@ class _Segmented extends StatelessWidget {
                     color: current == mode
                         ? accent
                         : Colors.white.withValues(alpha: 0.55),
-                    fontSize: 11,
+                    fontSize: MediaQuery.sizeOf(context).width < 700 ? 12 : 11,
                     fontWeight: FontWeight.w700,
                     letterSpacing: 2,
                   ),

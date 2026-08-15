@@ -126,3 +126,9 @@ if(NOT CMAKE_BUILD_TYPE MATCHES "Debug")
   install(FILES "${AOT_LIBRARY}" DESTINATION "${INSTALL_BUNDLE_LIB_DIR}"
     COMPONENT Runtime)
 endif()
+
+# Desktop icon set (hicolor) so packagers / .desktop integrations can pick it
+# up from the bundle's data directory.
+install(DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/icons/"
+  DESTINATION "${INSTALL_BUNDLE_DATA_DIR}/icons"
+  COMPONENT Runtime)

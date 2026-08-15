@@ -1,11 +1,18 @@
-# Sonic Topography
+<p align="center">
+  <img src="assets/icon/app_icon.png" width="128" alt="Sonic Topography logo" />
+</p>
+
+<h1 align="center">Sonic Topography</h1>
+
+<p align="center">
+  <img src="https://img.shields.io/badge/platforms-macOS%20%7C%20Windows%20%7C%20Linux%20%7C%20Android%20%7C%20iOS-blue" alt="platforms" />
+  <img src="https://img.shields.io/badge/license-MIT-green" alt="license" />
+</p>
 
 A GPU-driven, audio-reactive 3D terrain visualizer built with Flutter and
 Impeller fragment shaders. Music becomes a rotating planet of pillars that
 lift, glow and ripple with the beat — rendered in a single display pass with
 an async heightfield bake.
-
-![platforms](https://img.shields.io/badge/platforms-macOS%20%7C%20Windows%20%7C%20Linux%20%7C%20Android%20%7C%20iOS-blue)
 
 ## Highlights
 
@@ -19,8 +26,9 @@ an async heightfield bake.
   controls and an advanced crosshair mode.
 - **13 built-in themes** with exact linear shader colors, theme rotation,
   and a ground-EQ mixer that reshapes how each band lifts the terrain.
-- **Adaptive quality** — render scale and ray-march budget adapt to measured
-  GPU raster time to hold high frame rates; full-res by default.
+- **Adaptive quality** — quality-first: renders at full device resolution and
+  probes into supersampling while the display's refresh rate is met, shedding
+  resolution only when frames are actually dropped.
 - **Responsive chrome** — phone through desktop layouts, official right-hand
   settings drawer, validated by automated multi-size layout tests.
 
@@ -79,3 +87,7 @@ shaders/
   sonic_heightfield.frag        # async bake pass
 test/                           # layout, color, trigger and shader tests
 ```
+
+## License
+
+Released under the [MIT License](LICENSE).
