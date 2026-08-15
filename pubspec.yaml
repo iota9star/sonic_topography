@@ -1,0 +1,30 @@
+name: sonic_topography
+description: "High-performance GPU shader audio-reactive 3D topography visualizer for Flutter."
+publish_to: 'none'
+version: 1.0.0+1
+
+environment:
+  # Flutter 3.47 (Dart 3.13): Impeller default on all platforms; the GLES
+  # Y-flip workaround removal depends on engine PR #186556.
+  sdk: ^3.13.0
+
+dependencies:
+  flutter:
+    sdk: flutter
+  cupertino_icons: ^1.0.8
+  record: ^7.1.0
+  vector_math: ^2.1.4
+  permission_handler: ^11.3.1
+  flutter_soloud: ^4.1.7
+  file_picker: ^11.0.3
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^6.0.0
+
+flutter:
+  uses-material-design: true
+  shaders:
+    - shaders/sonic_topography.frag
+    - shaders/sonic_heightfield.frag

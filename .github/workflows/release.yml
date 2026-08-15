@@ -1,0 +1,146 @@
+name: build-release
+
+# Every push builds every supported platform (no web) and publishes a
+# GitHub release with all artifacts.
+on:
+  push:
+    branches: ['**']
+    tags: ['v*']
+  workflow_dispatch:
+
+env:
+  FLUTTER_VERSION: '3.47.0'
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: ${{ matrix.target }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: android
+            os: ubuntu-latest
+          - target: ios
+            os: macos-latest
+          - target: macos
+            os: macos-latest
+          - target: windows
+            os: windows-latest
+          - target: linux
+            os: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Java
+        if: matrix.target == 'android'
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          channel: stable
+          cache: true
+
+      - name: Linux build deps
+        if: matrix.target == 'linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y clang cmake git ninja-build pkg-config \
+            libgtk-3-dev liblzma-dev libstdc++-12-dev
+
+      - name: Pub get
+        run: flutter pub get
+
+      - name: Build (Android)
+        if: matrix.target == 'android'
+        run: |
+          flutter build apk --release
+          flutter build appbundle --release
+          mkdir -p out
+          cp build/app/outputs/flutter-apk/app-release.apk \
+            out/sonic_topography-android-arm64.apk
+
+      - name: Build (iOS, unsigned)
+        if: matrix.target == 'ios'
+        run: |
+          flutter build ipa --release --no-codesign
+          mkdir -p out
+          # Unsigned IPA from the xcarchive — sideload via alt-signing tools.
+          cd build/ios/archive/*.xcarchive/Products/Applications || exit 1
+          mkdir -p "$GITHUB_WORKSPACE/build/ios/Payload"
+          cp -r *.app "$GITHUB_WORKSPACE/build/ios/Payload/"
+          cd "$GITHUB_WORKSPACE/build/ios"
+          zip -r "$GITHUB_WORKSPACE/out/sonic_topography-ios-unsigned.ipa" Payload
+
+      - name: Build (macOS)
+        if: matrix.target == 'macos'
+        run: |
+          flutter build macos --release
+          mkdir -p out
+          cd build/macos/Build/Products/Release
+          zip -r -y "$GITHUB_WORKSPACE/out/sonic_topography-macos.zip" \
+            sonic_topography.app
+
+      - name: Build (Windows)
+        if: matrix.target == 'windows'
+        shell: pwsh
+        run: |
+          flutter build windows --release
+          New-Item -ItemType Directory -Force -Path out | Out-Null
+          Compress-Archive -Path build/windows/x64/runner/Release/* `
+            -DestinationPath out/sonic_topography-windows-x64.zip
+
+      - name: Build (Linux)
+        if: matrix.target == 'linux'
+        run: |
+          flutter build linux --release
+          mkdir -p out
+          cd build/linux/x64/release/bundle
+          tar -czf "$GITHUB_WORKSPACE/out/sonic_topography-linux-x64.tar.gz" .
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: sonic_topography-${{ matrix.target }}
+          path: out/*
+
+  release:
+    name: publish release
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: List artifacts
+        run: ls -la dist
+
+      - name: Create release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: build-${{ github.run_number }}
+          name: Build ${{ github.run_number }} (${{ github.sha }})
+          body: |
+            Automated build from commit ${{ github.sha }}.
+
+            - Android APK is signed with the committed debug key (installable
+              directly); the AAB is for store upload with your own key.
+            - iOS IPA is **unsigned** — sign with your own certificate or
+              sideload with a signing tool.
+            - macOS zip contains the .app bundle (unsigned / ad-hoc).
+          files: dist/*
+          generate_release_notes: false
+          prerelease: false

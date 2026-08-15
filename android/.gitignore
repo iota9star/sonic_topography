@@ -1,0 +1,17 @@
+gradle-wrapper.jar
+/.gradle
+/captures/
+/gradlew
+/gradlew.bat
+/local.properties
+GeneratedPluginRegistrant.java
+.cxx/
+
+# Remember to never publicly share your keystore.
+# See https://flutter.dev/to/reference-keystore
+# key.properties and the debug.keystore below ARE committed on purpose:
+# they hold a standard Android debug key (password "android") used to sign
+# CI release builds so artifacts install directly. Never commit a real key.
+!key.properties
+!app/debug.keystore
+**/*.jks
