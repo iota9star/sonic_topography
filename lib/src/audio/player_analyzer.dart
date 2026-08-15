@@ -4,6 +4,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter_soloud/flutter_soloud.dart';
 
 import 'audio_bands.dart';
+import '../diag.dart';
 import 'beat_detector.dart';
 import 'fft.dart';
 import 'freq_trigger.dart';
@@ -88,7 +89,10 @@ class PlayerAnalyzer extends AudioAnalyzer {
     try {
       _audioData.updateSamples();
       final samples = _audioData.getAudioData();
-      if (samples.length < 256) return;
+      if (samples.length < 256) {
+        _diag();
+        return;
+      }
       // Linear layout: [0..255] FFT values 0..1.
       // Upsample 256 → 513 bins, then map onto the reference's dB scale —
       // linear magnitudes leave mid/treble under the terrain's noise gate.
@@ -122,12 +126,27 @@ class PlayerAnalyzer extends AudioAnalyzer {
         _beatQueue.add(Beat(strength.clamp(0.0, 1.5), action.name));
       }
       triggers.commitFrame(db);
+      _diag(rawMax: samples.isEmpty ? 0 : samples.reduce(math.max));
     } catch (e) {
+      sonicDiag('player: pull FAILED: $e');
       if (_errorCount++ < 5) debugPrint('SONIC_PLAYER: pull failed: $e');
     }
   }
 
   int _errorCount = 0;
+
+  /// Heartbeat into the SONIC_DIAG log (~every 2s): engine raw level,
+  /// processed bands, playback flags. Field-debugging "it froze" reports.
+  DateTime _lastDiag = DateTime.fromMillisecondsSinceEpoch(0);
+  void _diag({double? rawMax}) {
+    final now = DateTime.now();
+    if (now.difference(_lastDiag).inMilliseconds < 2000) return;
+    _lastDiag = now;
+    sonicDiag('player: active=$_active play=${isPlaying} rawMax='
+        '${rawMax?.toStringAsFixed(3) ?? '-'}'
+        ' sub=${_current.subBass.toStringAsFixed(2)} '
+        'E=${_current.energy.toStringAsFixed(2)} pos=${position.inSeconds}s');
+  }
 
   // ---- playback state & controls ----
 
