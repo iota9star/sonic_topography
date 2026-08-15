@@ -52,8 +52,9 @@ fvm flutter test
 
 ## Controls
 
-- **Audio sources** — DEMO (built-in synthesizer), MUSIC (local files /
-  folders) and MIC (live microphone input with dB-scale normalization).
+- **Audio sources** — DEMO (built-in synthesizer), MUSIC (pick audio
+  files from the system dialog) and MIC (live microphone input with
+  dB-scale normalization).
 - **Settings drawer** (right edge or the theme pill in the top bar):
   - *Audio source* — the DEMO / MUSIC / MIC picker lives here.
   - *Themes* — 18 presets, tap to apply, optional auto-rotation.

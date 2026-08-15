@@ -418,8 +418,8 @@ class _SonicHomePageState extends State<SonicHomePage> {
         }
       case AudioSourceMode.player:
         if (_playlist.isEmpty) {
-          final added = await _chooseAudio();
-          sonicDiag('ui: chooseAudio -> $added');
+          final added = await _pickFiles();
+          sonicDiag('ui: pickFiles -> $added');
           if (!added || _playlist.isEmpty) {
             if (!mounted) return;
             setState(() => _source = AudioSourceMode.demo);
@@ -460,97 +460,6 @@ class _SonicHomePageState extends State<SonicHomePage> {
     } catch (e) {
       sonicDiag('picker: skipEntitlementsChecks failed: $e');
     }
-  }
-
-  static const _audioExts = [
-    '.mp3',
-    '.flac',
-    '.wav',
-    '.ogg',
-    '.m4a',
-    '.aac',
-    '.opus',
-  ];
-
-  /// Ask the user to pick a whole directory, then import every audio file in
-  /// it (non-recursive, case-insensitive extensions, alphabetical order).
-  Future<bool> _pickFolder() async {
-    await _skipPickerEntitlementChecks();
-    sonicDiag('picker: getDirectoryPath() calling');
-    String? dir;
-    try {
-      dir = await FilePicker.getDirectoryPath();
-    } catch (e) {
-      sonicDiag('picker: getDirectoryPath THREW: $e');
-      _toast('Folder picker failed: $e');
-      return false;
-    }
-    sonicDiag('picker: getDirectoryPath -> $dir');
-    if (dir == null) return false;
-    final List<File> audio;
-    try {
-      audio =
-          Directory(dir)
-              .listSync(recursive: false)
-              .whereType<File>()
-              .where((f) {
-                final lower = f.path.toLowerCase();
-                return _audioExts.any(lower.endsWith);
-              })
-              .toList()
-            ..sort(
-              (a, b) => a.path.toLowerCase().compareTo(b.path.toLowerCase()),
-            );
-    } catch (e) {
-      _toast('Could not read directory: $e');
-      return false;
-    }
-    if (audio.isEmpty) {
-      _toast('No audio files found in that folder');
-      return false;
-    }
-    for (final f in audio) {
-      final title = f.path
-          .split('/')
-          .last
-          .replaceFirst(RegExp(r'\.[^.]+$'), '');
-      final track = _Track(f.path, title);
-      track.lyrics = _sidecarLyrics(f.path);
-      _playlist.add(track);
-    }
-    if (_trackIndex < 0) _trackIndex = 0;
-    _toast('Added ${audio.length} tracks');
-    return true;
-  }
-
-  /// Choice dialog when entering MUSIC mode with an empty playlist.
-  Future<bool> _chooseAudio() async {
-    final choice = await showDialog<String>(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        title: const Text('Add music'),
-        content: const Text(
-          'Pick individual audio files, or import an entire folder.',
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.of(ctx).pop('cancel'),
-            child: const Text('Cancel'),
-          ),
-          TextButton(
-            onPressed: () => Navigator.of(ctx).pop('folder'),
-            child: const Text('Choose folder'),
-          ),
-          FilledButton(
-            onPressed: () => Navigator.of(ctx).pop('files'),
-            child: const Text('Choose files'),
-          ),
-        ],
-      ),
-    );
-    if (choice == 'folder') return _pickFolder();
-    if (choice == 'files') return _pickFiles();
-    return false;
   }
 
   Future<bool> _pickFiles() async {
@@ -600,6 +509,9 @@ class _SonicHomePageState extends State<SonicHomePage> {
     final ok = await _pickFiles();
     if (ok && _playlist.length > before) {
       _toast('Added ${_playlist.length - before} track(s)');
+      if (!_playerReady && _trackIndex >= 0) {
+        await _playIndex(_trackIndex);
+      }
     }
   }
 
@@ -694,6 +606,7 @@ class _SonicHomePageState extends State<SonicHomePage> {
   // ---- misc helpers ----
 
   void _toast(String msg) {
+    sonicDiag('toast: $msg');
     if (!mounted) return;
     ScaffoldMessenger.of(context)
       ..hideCurrentSnackBar()
@@ -870,14 +783,6 @@ class _SonicHomePageState extends State<SonicHomePage> {
                 onCyclePlayMode: _cyclePlayMode,
                 onSeek: (ms) => _player.seekTo(Duration(milliseconds: ms)),
                 onAddFiles: _addMoreFiles,
-                onAddFolder: () async {
-                  final before = _playlist.length;
-                  if (await _pickFolder() && _playlist.length > before) {
-                    if (!_playerReady && _trackIndex >= 0) {
-                      await _playIndex(_trackIndex);
-                    }
-                  }
-                },
                 playlist: [for (final t in _playlist) t.title],
                 trackIndex: _trackIndex,
                 onPlayTrack: _playIndex,
@@ -917,7 +822,6 @@ class _Overlay extends StatefulWidget {
     required this.onCyclePlayMode,
     required this.onSeek,
     required this.onAddFiles,
-    required this.onAddFolder,
     required this.playlist,
     required this.trackIndex,
     required this.onPlayTrack,
@@ -950,7 +854,6 @@ class _Overlay extends StatefulWidget {
   final VoidCallback onCyclePlayMode;
   final ValueChanged<int> onSeek;
   final VoidCallback onAddFiles;
-  final VoidCallback onAddFolder;
   final List<String> playlist;
   final int trackIndex;
   final ValueChanged<int> onPlayTrack;
@@ -1004,7 +907,6 @@ class _OverlayState extends State<_Overlay> {
                 onCyclePlayMode: widget.onCyclePlayMode,
                 onSeek: widget.onSeek,
                 onAddFiles: widget.onAddFiles,
-                onAddFolder: widget.onAddFolder,
                 showLyrics: widget.showLyrics,
                 onToggleLyrics: widget.onToggleLyrics,
                 playlist: widget.playlist,
@@ -1316,7 +1218,6 @@ class _PlayerBar extends StatelessWidget {
     required this.onCyclePlayMode,
     required this.onSeek,
     required this.onAddFiles,
-    required this.onAddFolder,
     required this.showLyrics,
     required this.onToggleLyrics,
     required this.playlist,
@@ -1338,7 +1239,6 @@ class _PlayerBar extends StatelessWidget {
   final VoidCallback onCyclePlayMode;
   final ValueChanged<int> onSeek;
   final VoidCallback onAddFiles;
-  final VoidCallback onAddFolder;
   final bool showLyrics;
   final VoidCallback onToggleLyrics;
   final List<String> playlist;
@@ -1384,12 +1284,6 @@ class _PlayerBar extends StatelessWidget {
                 icon: Icons.playlist_add_rounded,
                 tip: 'Add files',
                 onTap: onAddFiles,
-              ),
-              const SizedBox(width: 2),
-              _IconBtn(
-                icon: Icons.folder_open_rounded,
-                tip: 'Import folder',
-                onTap: onAddFolder,
               ),
               const SizedBox(width: 2),
               _IconBtn(
