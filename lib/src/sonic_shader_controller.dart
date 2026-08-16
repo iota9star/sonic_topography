@@ -295,6 +295,11 @@ class _SonicTopographyState extends State<SonicTopography>
   bool _staticsApplied = false;
   // Async heightfield bake: pipelined, NEVER blocks the CPU.
   ui.Image? _bakeImage;
+  // Live-resize fast response: while the window is dragged, macOS demands
+  // many presents per second; at native cost the GPU saturates, presents lag
+  // the growing surface and the compositor shows stale/incomplete edges.
+  ui.Size _lastPaintSize = ui.Size.zero;
+  int _resizeUntilUs = 0; // clock cutoff for the reduced-resolution window
   bool _bakeInFlight = false;
 
   double _lastRenderMs = 0;
@@ -816,6 +821,18 @@ class _SonicPainter extends CustomPainter {
     // supersampling territory on strong hardware.
     if (state.widget.adaptiveQuality) {
       scale *= state._quality.renderScale;
+    }
+    // Live-resize: render half-res for the duration of the gesture (and a
+    // 150 ms tail after the last size change) so frames keep pace with the
+    // resize presents. Adaptive's own reaction needs ~1.5 s of sustained
+    // misses — far too slow for a one-second drag; this is instant.
+    final nowUs = state._clock.elapsedMicroseconds;
+    if (size != state._lastPaintSize) {
+      state._lastPaintSize = size;
+      state._resizeUntilUs = nowUs + 150000;
+    }
+    if (nowUs < state._resizeUntilUs) {
+      scale *= 0.5;
     }
     final rw = (devW * scale).clamp(2.0, 8192.0);
     final rh = (devH * scale).clamp(2.0, 8192.0);
