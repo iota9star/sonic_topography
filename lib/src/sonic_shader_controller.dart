@@ -342,6 +342,7 @@ class _SonicTopographyState extends State<SonicTopography>
   double _camAngle = 0;
   double _rotEma = 0; // smoothed rotation speed for jitter-free camera
   int _bakeCounter = 0; // throttle: bake every Nth frame (audio shape is smooth)
+  int _bakeN = 0; // total completed bakes (SONIC_RS telemetry)
   AudioBands _bands = AudioBands.idle;
 
   // Kick envelope (reference kickEnvelope.ts, exact port): adaptive noise
@@ -350,6 +351,7 @@ class _SonicTopographyState extends State<SonicTopography>
   // low-end punch AND the floating-block pulse, exactly like the reference.
   double _kickNoiseFloor = 0;
   double _kickEnvelope = 0;
+  int _kickOnsetUntilUs = 0;
   AudioBands _bakeBands = AudioBands.idle;
 
   /// Reference amplitude mapping: ≤1 is linear, above 1 it curves
@@ -530,6 +532,10 @@ class _SonicTopographyState extends State<SonicTopography>
           case 'kick':
             kickOnset = true;
             onsetStrength = math.max(onsetStrength, b.strength);
+            if (kSonicTraceResize) {
+              print('SONIC_RS | beat kick str=${b.strength} '
+                  'env=${_kickEnvelope.toStringAsFixed(2)}');
+            }
             if (analyzer is DemoAnalyzer) coloredPulse(2.0);
           case 'pulse':
             coloredPulse(2.0);
@@ -591,8 +597,17 @@ class _SonicTopographyState extends State<SonicTopography>
         (raw - _kickNoiseFloor) * (1.0 - math.exp(-floorRate * dt));
     final kickLevel = (raw - _kickNoiseFloor - levelGate).clamp(0.0, 1.0);
     final breath = math.min(maxBreath, kickLevel * breathGain);
-    final onsetTarget =
-        kickOnset ? math.max(0.48, onsetStrength * 0.95) : 0.0;
+    // Reference onsetTarget = max(0.48, kickLevel * 0.95), latched for ONE
+    // frame at their 60 fps — the envelope attack blend then covers
+    // 1-e^(-42/60) ≈ 50% of the target in that frame. Our ticker can run at
+    // 120 Hz+, where a one-frame latch only covers ~28%, halving the kick
+    // punch. Hold the latch for one reference frame (16 ms) so the total
+    // attack blend is identical at any tick rate.
+    if (kickOnset) _kickOnsetUntilUs = _clock.elapsedMicroseconds + 16000;
+    final onsetActive = _clock.elapsedMicroseconds < _kickOnsetUntilUs;
+    final onsetTarget = onsetActive
+        ? math.max(0.48, kickLevel * 0.95)
+        : 0.0;
     final envTarget = math.max(breath, onsetTarget);
     final envRate = envTarget > _kickEnvelope ? envAtk : envRel;
     _kickEnvelope = math.max(
@@ -616,6 +631,11 @@ class _SonicTopographyState extends State<SonicTopography>
       bassCap: 1.15,
     );
     _bakeBands = _bands;
+    if (kSonicTraceResize && _bakeN % 30 == 0) {
+      print('SONIC_RS | kick env=${_kickEnvelope.toStringAsFixed(2)} '
+          'floor=${_kickNoiseFloor.toStringAsFixed(2)} '
+          'onset=$kickOnset str=$onsetStrength');
+    }
 
     // Warmth/brightness from the kick-mixed bands (reference useFrame): the
     // ratio of low vs high band energy decides the cool→warm center blend.
@@ -703,6 +723,27 @@ class _SonicTopographyState extends State<SonicTopography>
       _retire(_bakeImage);
       _bakeImage = img;
       _bakeInFlight = false;
+      if (kSonicTraceResize && _bakeN % 30 == 0) {
+        _bakeN++;
+        // Read back a downsampled average: an all-zero heightfield means the
+        // display has nothing to trace (pure fog) — catches dead bakes.
+        img.toByteData().then((bd) {
+          if (bd == null) return;
+          final d = bd.buffer.asUint32List();
+          var sum = 0;
+          final step = math.max(1, d.length ~/ 4096);
+          var n = 0;
+          for (var i = 0; i < d.length; i += step) {
+            sum += (d[i] >> 24) & 0xFF; // first channel byte (big-endian R)
+            n++;
+          }
+          print('SONIC_RS | bake#$_bakeN ${img.width}x${img.height} '
+              'avgElevByte=${sum ~/ n} bands sub=${_bakeBands.subBass.toStringAsFixed(2)}'
+              ' bass=${_bakeBands.bass.toStringAsFixed(2)}');
+        });
+      } else {
+        _bakeN++;
+      }
     }, onError: (Object e) {
       // A failed bake (surface resize, context loss) must not wedge the flag —
       // otherwise no bake ever runs again and the display goes static.
@@ -941,8 +982,14 @@ class _SonicPainter extends CustomPainter {
     // buys nothing — it costs a full-screen copy plus a sync flush that adds
     // several ms of pipeline overhead per frame. Draw the shader straight
     // onto the canvas; the canvas transform rasterizes it at device pixels.
+    // uResolution MUST be the LOGICAL size here: FlutterFragCoord() reports
+    // fragment positions in logical pixels (gl_FragCoord divided by the
+    // transform's device-pixel ratio), not framebuffer pixels. Passing the
+    // device size made uv span only 0..1/dpr — the whole window rendered the
+    // image's top-left quadrant stretched, squashing the terrain into the
+    // bottom of the window with the dome pinned to the right edge.
     if ((scale - 1.0).abs() < 0.002) {
-      state._pushDynamics(fs, devW, devH);
+      state._pushDynamics(fs, size.width, size.height);
       canvas.drawRect(Offset.zero & size, ui.Paint()..shader = fs);
       if (state._displayImage != null) {
         state._retire(state._displayImage);
@@ -971,9 +1018,11 @@ class _SonicPainter extends CustomPainter {
     } catch (e) {
       if (kSonicTraceResize) print('SONIC_RS | toImageSync threw: $e');
       // Fallback for hosts without toImageSync: draw the shader directly onto
-      // the canvas at device resolution (no pixel cap, but rare on modern HW).
+      // the canvas at logical size (the transform rasterizes it at device
+      // pixels), with uResolution matching FlutterFragCoord's logical space.
+      state._pushDynamics(fs, size.width, size.height);
       canvas.drawRect(
-        Offset.zero & ui.Size(rw, rh),
+        Offset.zero & size,
         ui.Paint()..shader = fs,
       );
       pic.dispose();

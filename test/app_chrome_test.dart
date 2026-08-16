@@ -70,14 +70,18 @@ void main() {
       await Future<void>.delayed(const Duration(milliseconds: 8));
     }
     demo.dispose();
-    // Music-like ceilings: sub must not sit near 1.0 forever (that strobes
-    // the terrain center through the ×5 bake lift).
-    expect(maxBands.subBass, lessThan(0.62),
+    // Music-like ceilings: sub spikes to ≈0.95 on loud kicks (real-music
+    // FFT level) but never sits pinned at 1.0 (that strobes the terrain
+    // center through the ×5 bake lift).
+    expect(maxBands.subBass, lessThan(1.0),
         reason: 'demo sub-bass peak ${maxBands.subBass}');
-    expect(maxBands.bass, lessThan(0.5));
+    expect(maxBands.bass, lessThan(0.62));
     expect(maxBands.mid, lessThan(0.4));
-    // And it must still be alive: sub swells well above its floor.
-    expect(minBands.subBass, lessThan(0.2));
-    expect(maxBands.subBass, greaterThan(0.35));
+    // The bassline must stay ALIVE between beats: a sustained ≈0.5 floor
+    // keeps the kick envelope's breath follower (and the terrain dome)
+    // from collapsing — flat-line bands converge the noise floor instead.
+    expect(minBands.subBass, greaterThan(0.45),
+        reason: 'demo sub-bass floor collapsed to ${minBands.subBass}');
+    expect(maxBands.subBass, greaterThan(0.85));
   });
 }

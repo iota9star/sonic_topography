@@ -31,17 +31,18 @@ class DemoAnalyzer extends AudioAnalyzer {
     // Advance by REAL elapsed time (frame-rate independent).
     final now = _clock.elapsedMilliseconds / 1000.0;
     _t = now;
-    final beat = _t * (_bpm / 60.0);
-    // SMOOTH band drivers — no sharp exp() transients (those caused visible
-    // flicker/stepping). Use slowly-varying sines so the terrain swells and
-    // recedes continuously, like real continuous audio does through an EMA.
-    //
-    // Levels are calibrated to what the mic/player pipelines deliver AFTER
-    // band normalization (sub peaks ≈0.5-0.6 on loud kicks, not 0.9+): the
-    // bake shader multiplies sub-bass by 5 at the terrain center, so an
-    // over-hot demo driver makes the center columns slam into the ceiling
-    // on every beat and the whole scene strobes.
-    final kick01 = sin(beat * pi) * 0.5 + 0.5; // smooth 1/beat swell
+    // Phase offset: start just past a kick peak so the terrain stands at
+    // full height from the very first visible frame (no launch rise-up).
+    final beat = _t * (_bpm / 60.0) + 0.15;
+    // Band drivers shaped like REAL loud music through the FFT pipeline, not
+    // smooth sines. Real audio keeps sub-bass fluctuating fast above the
+    // kick envelope's adaptive noise floor: a sustained bassline around 0.5
+    // with hard kick spikes to ≈0.95 every beat. That above-floor movement
+    // is what keeps the reference's breath follower (and thus the terrain
+    // dome) alive BETWEEN beats — a flat 0.36 line converges the floor and
+    // the dome collapses to the horizon sliver between kicks.
+    final beatPhase = beat - beat.floorToDouble();
+    final kick01 = exp(-5.0 * beatPhase); // sharp 1 → 0.01 decay per beat
     final snare01 = sin(beat * pi + pi * 0.5) * 0.5 + 0.5;
     final drift1 = sin(beat * 0.5) * 0.5 + 0.5;
     final drift2 = sin(beat * 0.7 + 1.0) * 0.5 + 0.5;
@@ -59,8 +60,10 @@ class DemoAnalyzer extends AudioAnalyzer {
     _bpm = 120 + 6 * sin(_t * 0.05);
 
     return AudioBands(
-      subBass: (0.08 + 0.47 * intensity * kick01).clamp(0.0, 1.0),
-      bass: (0.08 + 0.34 * intensity * drift1).clamp(0.0, 1.0),
+      // Real-music levels: sub bassline rides ~0.5 with kick spikes to
+      // ≈0.95; bass (their screenshot metrics show 0.55 mid-song) ~0.42-0.56.
+      subBass: (0.50 + 0.45 * intensity * kick01).clamp(0.0, 1.0),
+      bass: (0.42 + 0.14 * intensity * drift1).clamp(0.0, 1.0),
       lowMid: (0.07 + 0.25 * intensity * drift2).clamp(0.0, 1.0),
       mid: (0.07 + 0.25 * intensity * snare01).clamp(0.0, 1.0),
       highMid: (0.05 + 0.19 * intensity * drift3).clamp(0.0, 1.0),
@@ -90,7 +93,7 @@ class DemoAnalyzer extends AudioAnalyzer {
   List<Beat> consumeBeats() {
     // Procedural beat detection from the clock: fire a kick on even beats and a
     // snare on odd beats, aligned with the band pulses from read().
-    final beat = _t * (_bpm / 60.0);
+    final beat = _t * (_bpm / 60.0) + 0.15;
     final curBeat = beat.floor();
     final out = <Beat>[];
     if (curBeat > _lastBeatIndex) {
