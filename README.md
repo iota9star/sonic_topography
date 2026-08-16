@@ -14,6 +14,8 @@ Impeller fragment shaders. Music becomes a rotating planet of pillars that
 lift, glow and ripple with the beat — rendered in a single display pass with
 an async heightfield bake.
 
+https://github.com/user-attachments/assets/2b3c6ac6-b7ee-48e1-a7ea-8332f5aac9c7
+
 ## Highlights
 
 - **Single-pass GPU rendering** — the whole scene (ray-marched pillar grid,
