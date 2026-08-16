@@ -55,3 +55,6 @@ android/local.properties
 
 # NOTE: android/key.properties and android/app/debug.keystore are COMMITTED
 # on purpose (standard debug key) so CI release builds install directly./android/build/
+
+# Local screen recordings — never commit
+/recording.mp4
