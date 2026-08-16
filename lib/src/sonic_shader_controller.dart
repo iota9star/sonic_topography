@@ -49,88 +49,143 @@ class SonicShaderController extends ChangeNotifier {
   ui.FragmentShader createBake() => _bakeProgram!.fragmentShader();
 }
 
-/// Adaptive quality — maximum fidelity at the display's full refresh rate.
+/// Adaptive quality — quality first, frame rate second.
 ///
-/// Policy: fps always wins, quality absorbs the slack. The budget is the
-/// display's real refresh interval (set from `display.refreshRate`). Cost is
-/// wall-clock frame time, which vsync quantizes to multiples of that interval:
-/// either we hit every vsync (≈1.0) or we drop to 2×/3× it. Sub-vsync GPU
-/// headroom is therefore invisible — the only way to discover it is to probe.
+/// Signal: the only trustworthy measure of "did we keep up" is the rate
+/// frames were actually PRESENTED. Presentation is vsync-quantized — on a
+/// 120 Hz host a frame either makes its vsync or presents at the next one,
+/// so displayed fps reads ~120 or ~60, never in between. Raster-thread
+/// durations were previously used as the cost signal and proved unreliable
+/// on desktop Impeller (fence/queue waits inflate them independent of real
+/// shader cost), which walked renderScale to its floor while the screen
+/// still showed 120 fps — blurry for no benefit.
 ///
-/// Stability matters more than squeezing the last notch: every renderScale
-/// change visibly re-rasters the grid, so a naive probe/retreat loop makes
-/// the whole scene pulse. This controller uses AIMD with a learned ceiling:
-/// a level that missed vsync once is remembered and not re-tried for ~20s of
-/// stable operation, drops are gentle single steps, and climbs require 1.2s
-/// of consecutive on-budget frames. The result settles just under the cliff
-/// and stays there.
+/// Policy (best image, then best frame rate):
+///  1. Never render below device pixels while a saner option exists.
+///  2. Tier `chase` — hold the display's FULL refresh rate. A miss first
+///     sheds supersampling (scale 1.5 → 1.0), preserving native sharpness.
+///  3. Tier `hold60` — at native resolution a miss switches the target to
+///     60 fps instead of the resolution: on a high-refresh host the rate
+///     halves exactly, and 60 fps motion on this scene is far less visible
+///     than a sub-native render. Only if 60 fps cannot be held at full
+///     resolution does the scale walk below 1.0 (weak GPUs), and only at
+///     the scale floor does ray-march density thin out.
+///  4. Long stable runs in hold60 re-probe chase with exponential backoff
+///     (window moves, shader warm-up and load changes alter the picture),
+///     so the rate settles instead of oscillating.
 class AdaptiveQuality {
   AdaptiveQuality({
     double initialRenderScale = 1.0,
-    this.targetFrameTimeMs = 1000 / 120,
-    this.minRenderScale = 0.4,
+    double refreshHz = 60,
+    this.minRenderScale = 0.5,
     this.maxRenderScale = 1.5,
   })  : renderScale = initialRenderScale.clamp(minRenderScale, maxRenderScale),
-        _ceiling = maxRenderScale;
+        _ceiling = maxRenderScale {
+    _refreshHz = refreshHz.clamp(30.0, 240.0);
+  }
 
-  double targetFrameTimeMs;
+  /// Display refresh rate (Hz), set from `display.refreshRate`.
+  double _refreshHz = 60;
   final double minRenderScale, maxRenderScale;
   double renderScale;
   double marchScale = 1.0;
 
-  double _ema = 1000 / 120;
+  bool _hold60 = false; // tier: chase full refresh (false) vs hold 60 fps
+  double _chaseProbeIn = 8; // stable seconds in hold60 before re-probing
+  double _probeBackoff = 180;
+  double _fpsEma = 60;
   double _cooldown = 0;
-  double _stableSec = 0; // consecutive on-budget time at the current scale
-  double _ceiling; // highest level not (recently) known to miss vsync
+  double _stableSec = 0; // consecutive healthy seconds at the current level
+  double _ceiling; // highest scale not (recently) known to miss
   int _sample = 0;
+  int _missStreak = 0; // consecutive miss evaluations (anti-jitter filter)
 
-  double get fps => _ema <= 0 ? 0 : 1000 / _ema;
+  double get fps => _fpsEma;
+  double get targetHz => _hold60 ? math.min(_refreshHz, 60) : _refreshHz;
 
-  void sample(double costMs) {
+  // Diagnostic surface for perf logging.
+  double get refreshHz => _refreshHz;
+  bool get hold60 => _hold60;
+  int get evalCount => _sample;
+  int get missStreak => _missStreak;
+
+  void setRefresh(double hz) {
+    _refreshHz = hz.clamp(30.0, 240.0);
+  }
+
+  /// [displayedFps] is the caller's EMA of presented-frame intervals;
+  /// [dtSec] the frame delta for the stability clocks.
+  void sample(double displayedFps, double dtSec) {
     _sample++;
-    _ema += (costMs - _ema) * 0.08;
-    final dtSec = (costMs / 1000.0).clamp(0.001, 0.05);
+    _fpsEma += (displayedFps - _fpsEma) * 0.12;
+    final dt = dtSec.clamp(0.001, 0.05);
     if (_cooldown > 0) {
-      _cooldown -= dtSec;
+      _cooldown -= dt;
       return;
     }
-    if (_sample < 20) return;
-    final ratio = _ema / targetFrameTimeMs;
-    if (ratio > 1.15) {
-      // Missing vsync: this level fails — record it as the new ceiling, shed
-      // one gentle notch (further misses walk down the staircase), and only
-      // touch ray-march density once resolution is at the floor.
-      final failed = renderScale;
-      final rs = (renderScale - 0.06).clamp(minRenderScale, maxRenderScale);
-      final stepped = (rs * 100).round() / 100.0;
-      if (stepped < renderScale) {
-        renderScale = stepped;
-        _ceiling = math.min(_ceiling, failed - 0.02);
-      } else {
+    if (_sample < 30) return; // skip warm-up noise
+    final healthy = _fpsEma >= targetHz * 0.88;
+    if (!healthy) {
+      // Require a sustained miss: single evaluations fire during transient
+      // system stalls (window drags, resizes, occlusion) and must not change
+      // the tier. Three spaced evaluations ≈ 1.5 s of real overload.
+      _missStreak++;
+      _stableSec = 0;
+      if (_missStreak < 3) {
+        _cooldown = 0.5;
+        return;
+      }
+      if (!_hold60 && renderScale > 1.0) {
+        // Chase tier: sacrifice supersampling before anything else.
+        final failed = renderScale;
+        final rs = (renderScale - 0.08).clamp(minRenderScale, maxRenderScale);
+        renderScale = (rs * 100).round() / 100.0;
+        _ceiling = math.min(_ceiling, failed - 0.04);
+      } else if (!_hold60 && _refreshHz > 61) {
+        // Native resolution missed full refresh on a high-refresh host:
+        // keep the pixels, halve the rate.
+        _hold60 = true;
+        _chaseProbeIn = _probeBackoff;
+      } else if (renderScale > minRenderScale) {
+        // True overload (60 Hz host, or 60 fps missed at native): shed
+        // resolution in gentle single steps.
+        final rs = (renderScale - 0.06).clamp(minRenderScale, maxRenderScale);
+        final stepped = (rs * 100).round() / 100.0;
+        if (stepped < renderScale) {
+          renderScale = stepped;
+        } else if (marchScale > 0.5) {
+          marchScale = (marchScale - 0.1).clamp(0.5, 1.0);
+        }
+      } else if (marchScale > 0.5) {
         marchScale = (marchScale - 0.1).clamp(0.5, 1.0);
       }
-      _stableSec = 0;
       _cooldown = 0.5;
       return;
     }
     // Budget met.
-    _stableSec += dtSec;
-    final cap = math.min(_ceiling, maxRenderScale);
-    if (renderScale < cap && _stableSec >= 1.2) {
-      // Climb one notch only after sustained stability, never above the
-      // learned ceiling.
-      final rs = (renderScale + 0.04).clamp(minRenderScale, cap);
+    _missStreak = 0;
+    _stableSec += dt;
+    final tierCap = _hold60
+        ? math.min(1.0, maxRenderScale) // no SSAA while settling for 60 fps
+        : math.min(_ceiling, maxRenderScale);
+    if (renderScale < tierCap && _stableSec >= 1.2) {
+      final rs = (renderScale + 0.04).clamp(minRenderScale, tierCap);
       renderScale = (rs * 100).round() / 100.0;
       _stableSec = 0;
       _cooldown = 0.6;
-    } else if (renderScale >= maxRenderScale - 0.001) {
-      marchScale = 1.0;
+    } else if (renderScale >= 1.0) {
+      marchScale = 1.0; // healthy at native: restore full march density
     }
-    if (_stableSec >= 20) {
-      // Long stable run: relax the ceiling one notch so load changes
-      // (window moved, shaders warmed up) get re-explored eventually.
-      _ceiling = (_ceiling + 0.04).clamp(minRenderScale, maxRenderScale);
-      _stableSec = 0;
+    if (_stableSec > 20) _stableSec = 20;
+    if (_hold60) {
+      _chaseProbeIn -= dt;
+      if (_chaseProbeIn <= 0 && renderScale >= 1.0 - 0.001 && marchScale >= 1.0) {
+        // Re-probe the full refresh rate; back off on the next failure.
+        _hold60 = false;
+        _probeBackoff = math.min(_probeBackoff * 2, 900);
+        _stableSec = 0;
+        _cooldown = 0.8; // let the fps EMA settle into the new cadence
+      }
     }
   }
 }
@@ -228,7 +283,11 @@ class _SonicTopographyState extends State<SonicTopography>
   late final AnimationController _anim;
   late final AdaptiveQuality _quality;
   final SceneState _scene = SceneState();
-  final PerfSampler? _perf = kSonicPerf ? PerfSampler() : null;
+  // Always-on: FrameTiming is the authoritative PRESENTED-fps signal the
+  // adaptive controller feeds on (the ticker cadence runs ahead of the
+  // rasterizer on desktop and would report frames that never hit the
+  // screen). The periodic log report stays behind kSonicPerf.
+  final PerfSampler _perf = PerfSampler();
 
   // Reused display + bake shaders. Statics set once; dynamics updated per frame.
   ui.FragmentShader? _dispFs;
@@ -288,7 +347,7 @@ class _SonicTopographyState extends State<SonicTopography>
     _last = _clock.elapsed;
     _quality = AdaptiveQuality(
       initialRenderScale: widget.renderScale,
-      targetFrameTimeMs: 1000 / widget.targetFps,
+      refreshHz: widget.targetFps,
       // Debug-mode overhead makes the SSAA probe chase a moving cliff and
       // oscillate; full device resolution is the sane dev ceiling.
       maxRenderScale: kDebugMode ? 1.0 : 1.5,
@@ -301,16 +360,15 @@ class _SonicTopographyState extends State<SonicTopography>
   @override
   void didChangeDependencies() {
     super.didChangeDependencies();
-    // The quality budget must match the display's real refresh interval.
-    // Without the perf sampler the controller scores the plain frame
-    // interval, which on a 60 Hz display (16.7 ms) would forever exceed a
-    // fixed 120 fps budget (8.3 ms) and drive renderScale to the floor —
-    // the classic "everything looks upscaled and blurry" bug.
+    // The quality budget must match the display's real refresh rate.
+    // Without this the controller scores against a stale target (e.g. a
+    // 60 Hz host against a 120 fps default) and misreads every frame as a
+    // miss — the classic "everything looks upscaled and blurry" bug.
     final views = WidgetsBinding.instance.platformDispatcher.views;
     if (views.isEmpty) return;
     final refresh = views.first.display.refreshRate;
     if (refresh > 0) {
-      _quality.targetFrameTimeMs = 1000.0 / refresh.clamp(30.0, 240.0);
+      _quality.setRefresh(refresh);
     }
   }
 
@@ -349,7 +407,7 @@ class _SonicTopographyState extends State<SonicTopography>
     final time = now.inMilliseconds / 1000.0;
     final frameMs = dt * 1000.0;
 
-    if (_perf != null) _perf.sample(_lastRenderMs, frameMs, () => time);
+    _perf.sample(_lastRenderMs, frameMs, () => time);
     // Track displayed FPS from real vsync intervals (not GPU raster) so the
     // UI readout reflects what the user actually sees. Uses the unclamped
     // interval — the 50ms clamp above is for animation stability only, and
@@ -358,11 +416,24 @@ class _SonicTopographyState extends State<SonicTopography>
       _displayedFpsEma += (1000.0 / (rawDt * 1000.0) - _displayedFpsEma) * 0.08;
     }
     if (widget.adaptiveQuality) {
-      // Adaptive quality uses GPU raster cost (the true shader budget).
-      final cost = (_perf != null && _perf.rasterEmaMs > 0) ? _perf.rasterEmaMs : frameMs;
-      _quality.sample(cost);
-      if (_perf != null) {
-        _perf.setQuality(renderScale: _quality.renderScale, marchScale: _quality.marchScale);
+      // Adaptive quality keys on PRESENTED fps (FrameTiming totalSpan EMA) —
+      // the ground truth of what the user sees. The UI ticker cadence runs
+      // ahead of the rasterizer on desktop and would report frames that
+      // never hit the screen.
+      final presented = _perf.presentedFpsEma;
+      _quality.sample(presented > 0 ? presented : _displayedFpsEma, dt);
+      _perf.setQuality(renderScale: _quality.renderScale, marchScale: _quality.marchScale);
+      if (kSonicPerf && _quality.evalCount % 120 == 0) {
+        // ignore: avoid_print
+        print('SONIC_AQ | presented=${_perf.presentedFpsEma.toStringAsFixed(1)}'
+            ' ticker=${_displayedFpsEma.toStringAsFixed(1)}'
+            ' ema=${_quality.fps.toStringAsFixed(1)}'
+            ' target=${_quality.targetHz.toStringAsFixed(0)}'
+            '(${_quality.refreshHz.toStringAsFixed(0)})'
+            ' hold60=${_quality.hold60}'
+            ' streak=${_quality.missStreak}'
+            ' evals=${_quality.evalCount}'
+            ' scale=${_quality.renderScale.toStringAsFixed(2)}');
       }
     }
     // Always report metrics — the readout must not freeze when adaptive
@@ -732,26 +803,40 @@ class _SonicPainter extends CustomPainter {
       state._staticsApplied = true;
     }
 
-    // Rasterize at full device resolution by default (crisp on retina — a
-    // 1.5MP cap would render at ~half res on modern displays and look soft),
-    // with only a sanity ceiling for extreme 5K/6K surfaces. Adaptive quality
-    // may push beyond 1.0 (supersampling) when the GPU has headroom.
+    // Rasterize at full device resolution (crisp on retina — sub-native
+    // renders upscale into blur and jaggies). The ceiling only guards
+    // extreme multi-monitor 6K+ surfaces; 16.6MP covers 5K at native 1:1.
     final dpr = _devicePixelRatio();
     final devW = size.width * dpr;
     final devH = size.height * dpr;
     final devPixels = devW * devH;
-    const maxPixels = 8400000.0; // ~8.4MP (4K-class) absolute ceiling
+    const maxPixels = 16600000.0; // ~16.6MP (5K-class) absolute ceiling
     var scale = devPixels > maxPixels ? math.sqrt(maxPixels / devPixels) : 1.0;
     // Adaptive quality can reduce this on weak hardware, or raise it into
     // supersampling territory on strong hardware.
     if (state.widget.adaptiveQuality) {
       scale *= state._quality.renderScale;
     }
-    final rw = (devW * scale).clamp(2.0, 4096.0);
-    final rh = (devH * scale).clamp(2.0, 4096.0);
+    final rw = (devW * scale).clamp(2.0, 8192.0);
+    final rh = (devH * scale).clamp(2.0, 8192.0);
+
+    fs.setImageSampler(0, hf);
+
+    // Native fast path: at exactly device resolution the offscreen image
+    // buys nothing — it costs a full-screen copy plus a sync flush that adds
+    // several ms of pipeline overhead per frame. Draw the shader straight
+    // onto the canvas; the canvas transform rasterizes it at device pixels.
+    if ((scale - 1.0).abs() < 0.002) {
+      state._pushDynamics(fs, devW, devH);
+      canvas.drawRect(Offset.zero & size, ui.Paint()..shader = fs);
+      if (state._displayImage != null) {
+        state._displayImage?.dispose();
+        state._displayImage = null;
+      }
+      return;
+    }
 
     state._pushDynamics(fs, rw, rh);
-    fs.setImageSampler(0, hf);
 
     // Record the shader into a Picture and rasterize SYNCHRONOUSLY at the
     // capped resolution (toImageSync — fast because rw×rh ≤ 1.5MP). Then blit

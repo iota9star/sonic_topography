@@ -45,13 +45,20 @@ class PerfSampler {
   double _renderScale = 0.75;
   double _marchScale = 1.0;
 
-  // EMA of the GPU rasterizer duration (ms) — the true shader cost, fed to the
-  // adaptive controller so it scales quality off real GPU headroom rather than
-  // the display-rate-limited frame interval.
+  // EMA of the GPU rasterizer duration (ms).
   double _rasterEma = 8.3;
 
   /// Latest EMA of the rasterizer duration (ms).
   double get rasterEmaMs => _rasterEma;
+
+  // EMA of the PRESENTED frame rate — totalSpan per frame is the wall-clock
+  // cadence frames actually reached the screen at. This (not the UI ticker
+  // cadence, which runs ahead of the rasterizer on desktop) is the signal
+  // adaptive quality must key on.
+  double _presentedFpsEma = 60;
+
+  /// Latest EMA of the presented frame rate (fps).
+  double get presentedFpsEma => _presentedFpsEma;
 
   /// Record the current adaptive quality so the log line shows it.
   void setQuality({required double renderScale, required double marchScale}) {
@@ -66,7 +73,11 @@ class PerfSampler {
       _raster.add(r);
       _rasterEma += (r - _rasterEma) * 0.1;
       // totalSpan = wall-clock from build start to raster finish (displayed).
-      _frame.add(t.totalSpan.inMicroseconds / 1000.0);
+      final f = t.totalSpan.inMicroseconds / 1000.0;
+      _frame.add(f);
+      if (f > 0) {
+        _presentedFpsEma += (1000.0 / f - _presentedFpsEma) * 0.1;
+      }
       _build.add(t.buildDuration.inMicroseconds / 1000.0);
     }
     while (_raster.length > _window) {
