@@ -1,4 +1,6 @@
 import 'dart:io' if (dart.library.html) 'io_web.dart';
+import 'dart:math' as math;
+import 'dart:ui' show FramePhase;
 
 import 'package:flutter/scheduler.dart';
 
@@ -12,6 +14,12 @@ import 'package:flutter/scheduler.dart';
 /// caps the *displayed* interval FPS).
 const bool kSonicPerf =
     bool.fromEnvironment('SONIC_PERF', defaultValue: false);
+
+/// Window-resize diagnostics: `--dart-define=SONIC_TRACE_RESIZE=true`.
+/// Logs paint/layout size, device pixel ratio, the uResolution handed to the
+/// shader and which raster path each frame took while the size is changing.
+const bool kSonicTraceResize =
+    bool.fromEnvironment('SONIC_TRACE_RESIZE', defaultValue: false);
 
 /// Lightweight rolling performance sampler used when [kSonicPerf] is on.
 ///
@@ -51,11 +59,17 @@ class PerfSampler {
   /// Latest EMA of the rasterizer duration (ms).
   double get rasterEmaMs => _rasterEma;
 
-  // EMA of the PRESENTED frame rate — totalSpan per frame is the wall-clock
-  // cadence frames actually reached the screen at. This (not the UI ticker
-  // cadence, which runs ahead of the rasterizer on desktop) is the signal
-  // adaptive quality must key on.
+  // EMA of the PRESENTED frame rate — the cadence frames actually reached
+  // the screen. Derived from the DELTA between consecutive frames'
+  // rasterFinish timestamps: under continuous animation a frame presents on
+  // the vsync following its rasterization, so the delta measures real output
+  // cadence INCLUDING missed vsyncs (a dropped frame doubles the delta).
+  // totalSpan was previously used and proved unusable on desktop Impeller:
+  // it measures pipeline latency (~2-5ms on a fast host), reading as
+  // 400-600 "fps" steady-state and dipping under GPU load — garbage in both
+  // directions that walked renderScale to its floor at launch.
   double _presentedFpsEma = 60;
+  int _lastRasterFinishUs = 0;
 
   /// Latest EMA of the presented frame rate (fps).
   double get presentedFpsEma => _presentedFpsEma;
@@ -72,12 +86,15 @@ class PerfSampler {
       final r = t.rasterDuration.inMicroseconds / 1000.0;
       _raster.add(r);
       _rasterEma += (r - _rasterEma) * 0.1;
-      // totalSpan = wall-clock from build start to raster finish (displayed).
-      final f = t.totalSpan.inMicroseconds / 1000.0;
-      _frame.add(f);
-      if (f > 0) {
-        _presentedFpsEma += (1000.0 / f - _presentedFpsEma) * 0.1;
+      final rf = t.timestampInMicroseconds(FramePhase.rasterFinish);
+      if (_lastRasterFinishUs > 0 && rf > _lastRasterFinishUs + 500) {
+        // Clamp: no display presents above 240Hz, and it takes exactly one
+        // out-of-order/coalesced timing pair to otherwise read 1e6 fps.
+        final fps = math.min(1e6 / (rf - _lastRasterFinishUs), 240.0);
+        _presentedFpsEma += (fps - _presentedFpsEma) * 0.1;
       }
+      _lastRasterFinishUs = rf;
+      _frame.add(t.totalSpan.inMicroseconds / 1000.0);
       _build.add(t.buildDuration.inMicroseconds / 1000.0);
     }
     while (_raster.length > _window) {

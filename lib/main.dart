@@ -13,6 +13,7 @@ import 'package:flutter/foundation.dart' show kReleaseMode;
 import 'package:flutter/material.dart';
 
 import 'package:sonic_topography/src/diag.dart';
+import 'package:sonic_topography/src/perf.dart' show kSonicTraceResize;
 import 'package:sonic_topography/sonic_topography.dart';
 
 void main() {
@@ -252,14 +253,33 @@ class _SonicHomePageState extends State<SonicHomePage> {
   );
 
   Future<void> _startDebugCaptureServer() async {
-    if (_dbgServerStarted || kReleaseMode) return;
+    if (_dbgServerStarted || (kReleaseMode && !kSonicTraceResize)) return;
     _dbgServerStarted = true;
+    // Sandbox-safe trigger: file existence. `touch /tmp/sonic_capture_now`
+    // captures; the trigger file is consumed. A socket bind is blocked when
+    // the app runs inside a seatbox (errno 1) — files still work.
+    if (kSonicTraceResize) {
+      DateTime lastConsumed = DateTime.fromMillisecondsSinceEpoch(0);
+      Timer.periodic(const Duration(milliseconds: 400), (_) {
+        final t = File('/tmp/sonic_capture_now');
+        if (!t.existsSync()) return;
+        // Consume by mtime, not deletion: a sandboxed process may be unable
+        // to delete the file, and a failed delete would re-trigger every
+        // tick — an endless capture storm that stalls the app itself.
+        final m = t.lastModifiedSync();
+        if (!m.isAfter(lastConsumed)) return;
+        lastConsumed = m;
+        unawaited(_debugCaptureFrames());
+      });
+      print('SONIC_RS | dbgcap file-trigger armed');
+    }
     try {
       final server = await ServerSocket.bind(
         InternetAddress.loopbackIPv4,
         50777,
       );
       sonicDiag('dbgcap: listening on 50777');
+      if (kSonicTraceResize) print('SONIC_RS | dbgcap listening on 50777');
       server.listen((socket) {
         socket.drain<void>().catchError((_) {});
         socket.destroy();
@@ -268,6 +288,7 @@ class _SonicHomePageState extends State<SonicHomePage> {
       });
     } catch (e) {
       sonicDiag('dbgcap: server failed: $e');
+      if (kSonicTraceResize) print('SONIC_RS | dbgcap bind failed: $e');
     }
   }
 
@@ -304,6 +325,7 @@ class _SonicHomePageState extends State<SonicHomePage> {
         final bytes = await img.toByteData(format: ui.ImageByteFormat.png);
         final path = '${dir.path}/sonic_dbg_$i.png';
         await File(path).writeAsBytes(bytes!.buffer.asUint8List());
+        if (kSonicTraceResize) print('SONIC_RS | dbgcap frame $i -> $path');
         final b = _active?.read() ?? AudioBands.idle;
         sonicDiag(
           'dbgcap: $i -> $path'

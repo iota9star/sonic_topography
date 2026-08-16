@@ -123,7 +123,9 @@ class AdaptiveQuality {
       _cooldown -= dt;
       return;
     }
-    if (_sample < 30) return; // skip warm-up noise
+    if (_sample < 240) return; // ~2 s warm-up: shader compile, first bakes,
+    // texture uploads and Metal pipeline caches all miss frames at launch —
+    // three such misses would lock hold60 for the probe backoff period.
     final healthy = _fpsEma >= targetHz * 0.88;
     if (!healthy) {
       // Require a sustained miss: single evaluations fire during transient
@@ -300,6 +302,7 @@ class _SonicTopographyState extends State<SonicTopography>
   // the growing surface and the compositor shows stale/incomplete edges.
   ui.Size _lastPaintSize = ui.Size.zero;
   int _resizeUntilUs = 0; // clock cutoff for the reduced-resolution window
+  int _rsTraceFrames = 0; // SONIC_RS resize-window frame counter
   bool _bakeInFlight = false;
 
   double _lastRenderMs = 0;
@@ -421,12 +424,20 @@ class _SonicTopographyState extends State<SonicTopography>
       _displayedFpsEma += (1000.0 / (rawDt * 1000.0) - _displayedFpsEma) * 0.08;
     }
     if (widget.adaptiveQuality) {
-      // Adaptive quality keys on PRESENTED fps (FrameTiming totalSpan EMA) —
-      // the ground truth of what the user sees. The UI ticker cadence runs
-      // ahead of the rasterizer on desktop and would report frames that
-      // never hit the screen.
-      final presented = _perf.presentedFpsEma;
-      _quality.sample(presented > 0 ? presented : _displayedFpsEma, dt);
+      // Resize grace: while the window is being resized (plus 0.5 s for the
+      // presentation cadence to settle), every timing signal is noise — the
+      // drag stalls presents and the stretched-blit frames read as instant.
+      // Sampling here once flipped hold60 for three minutes off one drag.
+      final inGrace =
+          _clock.elapsedMicroseconds < _resizeUntilUs + 500000;
+      if (!inGrace) {
+        // Adaptive quality keys on PRESENTED fps (rasterFinish cadence) —
+        // the ground truth of what the user sees. The UI ticker cadence runs
+        // ahead of the rasterizer on desktop and would report frames that
+        // never hit the screen.
+        final presented = _perf.presentedFpsEma;
+        _quality.sample(presented > 0 ? presented : _displayedFpsEma, dt);
+      }
       _perf.setQuality(renderScale: _quality.renderScale, marchScale: _quality.marchScale);
       if (kSonicPerf && _quality.evalCount % 120 == 0) {
         // ignore: avoid_print
@@ -437,6 +448,7 @@ class _SonicTopographyState extends State<SonicTopography>
             '(${_quality.refreshHz.toStringAsFixed(0)})'
             ' hold60=${_quality.hold60}'
             ' streak=${_quality.missStreak}'
+            ' grace=$inGrace'
             ' evals=${_quality.evalCount}'
             ' scale=${_quality.renderScale.toStringAsFixed(2)}');
       }
@@ -654,6 +666,12 @@ class _SonicTopographyState extends State<SonicTopography>
       _bakeImage?.dispose();
       _bakeImage = img;
       _bakeInFlight = false;
+    }, onError: (Object e) {
+      // A failed bake (surface resize, context loss) must not wedge the flag —
+      // otherwise no bake ever runs again and the display goes static.
+      pic.dispose();
+      _bakeInFlight = false;
+      if (kSonicTraceResize) print('SONIC_RS | bake toImage failed: $e');
     });
   }
 
@@ -822,20 +840,60 @@ class _SonicPainter extends CustomPainter {
     if (state.widget.adaptiveQuality) {
       scale *= state._quality.renderScale;
     }
-    // Live-resize: render half-res for the duration of the gesture (and a
-    // 150 ms tail after the last size change) so frames keep pace with the
-    // resize presents. Adaptive's own reaction needs ~1.5 s of sustained
-    // misses — far too slow for a one-second drag; this is instant.
+    // Live-resize handling for the duration of the gesture (and a 150 ms
+    // tail after the last size change). See the cached-blit branch below.
     final nowUs = state._clock.elapsedMicroseconds;
     if (size != state._lastPaintSize) {
       state._lastPaintSize = size;
       state._resizeUntilUs = nowUs + 150000;
+      if (kSonicTraceResize) {
+        final lay = state._size; // LayoutBuilder's view of the same box
+        var phys = 'n/a';
+        try {
+          final v = ui.PlatformDispatcher.instance.views.first;
+          phys = '${v.physicalSize.width}x${v.physicalSize.height}';
+        } catch (_) {}
+        print('SONIC_RS | size-change paint=${size.width}x${size.height} '
+            'layout=${lay.width}x${lay.height} '
+            '${lay == size ? '' : 'MISMATCH '}dpr=${_devicePixelRatio()} '
+            'engine-phys=$phys');
+      }
     }
     if (nowUs < state._resizeUntilUs) {
+      // Live-resize floods the pipeline with size changes. Rendering the
+      // full shader (or churning toImageSync textures) at every step
+      // saturates the raster thread, viewport-metrics events then lag by
+      // seconds, and the layout sticks at a stale size — the scene visibly
+      // collapses into a corner of the window. Instead: one cheap 0.5×
+      // render seeds the cache, every other drag frame is a single
+      // stretched blit (~0.1 ms), letting metrics land immediately.
+      final cached = state._displayImage;
+      if (cached != null) {
+        canvas.drawImageRect(
+          cached,
+          ui.Rect.fromLTWH(
+              0, 0, cached.width.toDouble(), cached.height.toDouble()),
+          Offset.zero & size,
+          ui.Paint()..filterQuality = ui.FilterQuality.low,
+        );
+        return;
+      }
       scale *= 0.5;
     }
     final rw = (devW * scale).clamp(2.0, 8192.0);
     final rh = (devH * scale).clamp(2.0, 8192.0);
+    if (kSonicTraceResize && nowUs < state._resizeUntilUs) {
+      state._rsTraceFrames++;
+      if (state._rsTraceFrames % 10 == 1) {
+        print('SONIC_RS | resize-seed #${state._rsTraceFrames} '
+            'paint=${size.width}x${size.height} dpr=$dpr '
+            'dev=${devW.toStringAsFixed(0)}x${devH.toStringAsFixed(0)} '
+            'uRes=${rw.toStringAsFixed(0)}x${rh.toStringAsFixed(0)} '
+            'scale=${scale.toStringAsFixed(2)}');
+      }
+    } else if (kSonicTraceResize) {
+      state._rsTraceFrames = 0;
+    }
 
     fs.setImageSampler(0, hf);
 
@@ -870,7 +928,8 @@ class _SonicPainter extends CustomPainter {
     try {
       img = pic.toImageSync(rw.toInt(), rh.toInt());
       pic.dispose();
-    } catch (_) {
+    } catch (e) {
+      if (kSonicTraceResize) print('SONIC_RS | toImageSync threw: $e');
       // Fallback for hosts without toImageSync: draw the shader directly onto
       // the canvas at device resolution (no pixel cap, but rare on modern HW).
       canvas.drawRect(
