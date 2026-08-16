@@ -303,6 +303,38 @@ class _SonicTopographyState extends State<SonicTopography>
   ui.Size _lastPaintSize = ui.Size.zero;
   int _resizeUntilUs = 0; // clock cutoff for the reduced-resolution window
   int _rsTraceFrames = 0; // SONIC_RS resize-window frame counter
+
+  // Images retired from active duty but possibly still referenced by
+  // pictures sitting in the raster queue. Disposing a ui.Image the moment
+  // it is replaced renders those pending pictures from destroyed textures —
+  // seen as black/garbled shader frames when the render path flips (e.g.
+  // renderScale stepping across 1.0). Retire first, dispose 400 ms later:
+  // far beyond any reasonable pipeline depth.
+  final List<(ui.Image, int)> _retired = [];
+
+  void _retire(ui.Image? img) {
+    if (img == null) return;
+    _retired.add((img, _clock.elapsedMicroseconds + 400000));
+    // Bound GPU memory: the raster pipeline is at most a few frames deep, so
+    // three retained generations cover every in-flight picture. Without the
+    // cap, a sub-native steady state (image replaced every frame) would hold
+    // ~50 full-window textures inside the 400 ms retirement window.
+    while (_retired.length > 3) {
+      _retired.removeAt(0).$1.dispose();
+    }
+  }
+
+  void _pruneRetired() {
+    if (_retired.isEmpty) return;
+    final now = _clock.elapsedMicroseconds;
+    _retired.removeWhere((e) {
+      if (e.$2 <= now) {
+        e.$1.dispose();
+        return true;
+      }
+      return false;
+    });
+  }
   bool _bakeInFlight = false;
 
   double _lastRenderMs = 0;
@@ -388,6 +420,10 @@ class _SonicTopographyState extends State<SonicTopography>
     _bakeFs?.dispose();
     _bakeImage?.dispose();
     _displayImage?.dispose();
+    for (final e in _retired) {
+      e.$1.dispose();
+    }
+    _retired.clear();
     _tick.dispose();
     super.dispose();
   }
@@ -406,6 +442,7 @@ class _SonicTopographyState extends State<SonicTopography>
   }
 
   void _tickBody() {
+    _pruneRetired();
     final now = _clock.elapsed;
     final rawDt = (now - _last).inMicroseconds / 1000000.0;
     // Clamp dt to [1ms, 50ms] — prevents rotation/stutter jumps on GC pauses or
@@ -663,7 +700,7 @@ class _SonicTopographyState extends State<SonicTopography>
         img.dispose();
         return;
       }
-      _bakeImage?.dispose();
+      _retire(_bakeImage);
       _bakeImage = img;
       _bakeInFlight = false;
     }, onError: (Object e) {
@@ -844,8 +881,11 @@ class _SonicPainter extends CustomPainter {
     // tail after the last size change). See the cached-blit branch below.
     final nowUs = state._clock.elapsedMicroseconds;
     if (size != state._lastPaintSize) {
+      // Zero = first paint ever: adopting the initial size is not a resize
+      // (arming here would blur the launch frames at half resolution).
+      final isFirstPaint = state._lastPaintSize == ui.Size.zero;
       state._lastPaintSize = size;
-      state._resizeUntilUs = nowUs + 150000;
+      if (!isFirstPaint) state._resizeUntilUs = nowUs + 150000;
       if (kSonicTraceResize) {
         final lay = state._size; // LayoutBuilder's view of the same box
         var phys = 'n/a';
@@ -905,7 +945,7 @@ class _SonicPainter extends CustomPainter {
       state._pushDynamics(fs, devW, devH);
       canvas.drawRect(Offset.zero & size, ui.Paint()..shader = fs);
       if (state._displayImage != null) {
-        state._displayImage?.dispose();
+        state._retire(state._displayImage);
         state._displayImage = null;
       }
       return;
@@ -943,7 +983,7 @@ class _SonicPainter extends CustomPainter {
       }
       return;
     }
-    state._displayImage?.dispose();
+    state._retire(state._displayImage);
     state._displayImage = img;
     if (sw != null) {
       sw.stop();
